@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Optional, List
 from pathlib import Path
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
@@ -96,11 +97,75 @@ LANGUAGE_OPTIONS = [
     {"value": "Korean", "label": "韩语"},
 ]
 
+# 启动和关闭事件处理
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    import asyncio
+    import concurrent.futures
+    
+    # 启动时执行
+    print("[启动] 应用启动中...")
+    os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
+    os.makedirs(VOICES_DIR, exist_ok=True)
+    
+    # 预加载常用模型（在线程池中执行，避免阻塞事件循环）
+    def preload_model_sync(mode: str, use_lite: bool, name: str):
+        """同步加载模型（在线程中执行）"""
+        try:
+            load_model_cached(mode, use_lite)
+            print(f"[启动] ✓ {name} 预加载完成")
+            return True
+        except Exception as e:
+            print(f"[启动] ⚠ {name} 预加载失败: {e}")
+            return False
+    
+    # 使用线程池预加载模型（后台执行，不阻塞启动）
+    print("[启动] 预加载常用模型（后台进行，不影响启动速度）...")
+    
+    async def preload_models():
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # 预加载预设音色模型（Lite版本，因为最常用）
+            future1 = loop.run_in_executor(
+                executor, 
+                preload_model_sync, 
+                "custom", True, "预设音色模型 (Lite)"
+            )
+            # 预加载克隆音色模型（Lite版本）
+            future2 = loop.run_in_executor(
+                executor,
+                preload_model_sync,
+                "clone", True, "克隆音色模型 (Lite)"
+            )
+            
+            # 等待所有模型加载完成（不阻塞启动）
+            await asyncio.gather(future1, future2, return_exceptions=True)
+            print("[启动] 模型预加载任务已提交（后台进行中）")
+    
+    # 在后台任务中预加载模型（不等待完成，让应用快速启动）
+    task = asyncio.create_task(preload_models())
+    
+    yield  # 应用运行期间
+    
+    # 如果应用关闭时模型还在加载，取消任务
+    if not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    
+    # 关闭时执行（如果需要清理资源）
+    print("[关闭] 应用关闭中...")
+
+
 # FastAPI 应用
 app = FastAPI(
     title="Qwen3-TTS Web",
     description="Qwen3-TTS 的 Web 界面",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS 中间件
@@ -114,6 +179,7 @@ app.add_middleware(
 
 # 缓存的模型
 _cached_models = {}
+_model_loading_lock = {}  # 用于防止并发加载同一模型
 
 
 # Pydantic 模型
@@ -159,8 +225,23 @@ def get_smart_path(folder_name: str) -> Optional[str]:
 
 def load_model_cached(mode: str, use_lite: bool = False):
     """加载并缓存模型"""
+    import threading
+    
     key = f"{mode}_{'lite' if use_lite else 'pro'}"
-    if key not in _cached_models:
+    
+    # 如果模型已缓存，直接返回
+    if key in _cached_models:
+        return _cached_models[key]
+    
+    # 使用锁防止并发加载同一模型
+    if key not in _model_loading_lock:
+        _model_loading_lock[key] = threading.Lock()
+    
+    with _model_loading_lock[key]:
+        # 双重检查，可能在等待锁的过程中其他线程已经加载了模型
+        if key in _cached_models:
+            return _cached_models[key]
+        
         model_type = "lite" if use_lite else "pro"
         if mode not in MODELS or model_type not in MODELS[mode]:
             raise HTTPException(status_code=500, detail=f"模型配置错误: {mode}")
@@ -170,8 +251,10 @@ def load_model_cached(mode: str, use_lite: bool = False):
         if not model_path:
             raise HTTPException(status_code=404, detail=f"模型未找到: {model_info['folder']}")
         
+        print(f"[模型加载] 开始加载模型: {key} ({model_path})")
         _cached_models[key] = load_model(model_path)
-    return _cached_models[key]
+        print(f"[模型加载] 模型加载完成: {key}")
+        return _cached_models[key]
 
 
 def convert_audio_if_needed(input_path: str) -> Optional[str]:
@@ -320,6 +403,40 @@ async def get_config():
 async def get_speakers():
     """获取所有音色"""
     return {"speakers": get_all_speakers()}
+
+
+@app.get("/api/models/status")
+async def get_models_status():
+    """获取模型加载状态"""
+    status = {}
+    for key in _cached_models.keys():
+        mode, model_type = key.rsplit("_", 1)
+        status[key] = {
+            "mode": mode,
+            "type": model_type,
+            "loaded": True,
+            "status": "已加载"
+        }
+    
+    # 列出所有可能的模型配置
+    all_models = {}
+    for mode in MODELS.keys():
+        for model_type in ["lite", "pro"]:
+            if model_type in MODELS[mode]:
+                key = f"{mode}_{model_type}"
+                if key not in status:
+                    all_models[key] = {
+                        "mode": mode,
+                        "type": model_type,
+                        "loaded": False,
+                        "status": "未加载"
+                    }
+    
+    return {
+        "loaded_models": status,
+        "available_models": all_models,
+        "total_loaded": len(status)
+    }
 
 
 @app.post("/api/tts")
@@ -1370,6 +1487,8 @@ async def history_page():
 os.makedirs("static/js", exist_ok=True)
 os.makedirs("static/css", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
 
 
 if __name__ == "__main__":
