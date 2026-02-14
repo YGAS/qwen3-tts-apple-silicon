@@ -27,7 +27,7 @@ mlx-audio 的 STT（语音转文字）模块支持以下模型类型：
 
 ### 方式一：从网络加载（推荐，首次自动下载）
 
-在 `web_app.py` 的 `ASR_MODELS` 配置中：
+在 `config.py` 的 `ASR_MODELS` 配置中：
 
 ```python
 ASR_MODELS = {

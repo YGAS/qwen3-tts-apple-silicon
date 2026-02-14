@@ -10,6 +10,7 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 STT_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "STT")
+TMP_DIR = os.path.join(BASE_DIR, "tmp")
 
 # 设置
 SAMPLE_RATE = 24000

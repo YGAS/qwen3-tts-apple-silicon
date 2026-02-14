@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 # 导入配置
-from config import BASE_DIR, BASE_OUTPUT_DIR, VOICES_DIR
+from config import BASE_DIR, BASE_OUTPUT_DIR, VOICES_DIR, TMP_DIR
 
 # 导入 API 路由
 from api import common, tts, stt, clone, history, files
@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     print("[启动] 应用启动中...")
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
     os.makedirs(VOICES_DIR, exist_ok=True)
+    os.makedirs(TMP_DIR, exist_ok=True)
     print("[启动] 模型将按需加载（首次使用时自动缓存）")
     
     yield
@@ -84,5 +85,6 @@ if __name__ == "__main__":
     import uvicorn
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
     os.makedirs(VOICES_DIR, exist_ok=True)
+    os.makedirs(TMP_DIR, exist_ok=True)
     uvicorn.run(app, host="0.0.0.0", port=8766)
 

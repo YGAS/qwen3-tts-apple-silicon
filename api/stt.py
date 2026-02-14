@@ -136,8 +136,10 @@ async def speech_to_text(
                     })
                     current_time += duration
         
-        file_paths = save_stt_results(text, processed_segments, audio.filename)
+        # 保存结果文件（包括原始音频文件）
+        file_paths = save_stt_results(text, processed_segments, audio.filename, wav_path)
         
+        # 保存历史记录
         history_item = {
             "id": str(uuid.uuid4()),
             "type": "stt",
@@ -149,15 +151,20 @@ async def speech_to_text(
             "srt_path": file_paths["srt_path"],
             "created_at": datetime.now().isoformat()
         }
+        # 如果保存了音频文件，添加到历史记录中
+        if "audio_path" in file_paths:
+            history_item["audio_path"] = file_paths["audio_path"]
         save_history_item(history_item)
         
+        # 清理临时文件（音频文件已保存到输出目录，可以清理临时文件）
         cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
         temp_input = None
         wav_path = None
         
         gc.collect()
         
-        return {
+        # 构建返回结果
+        result = {
             "success": True,
             "text": text,
             "language": language,
@@ -166,6 +173,11 @@ async def speech_to_text(
             "srt_path": file_paths["srt_path"],
             "history_id": history_item["id"]
         }
+        # 如果保存了音频文件，添加到返回结果中
+        if "audio_path" in file_paths:
+            result["audio_path"] = file_paths["audio_path"]
+        
+        return result
     except HTTPException:
         cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
         cleanup_stt_temp_files(temp_output_dir)

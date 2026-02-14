@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 from typing import Optional, List
 from config import BASE_DIR, BASE_OUTPUT_DIR, STT_OUTPUT_DIR, MODELS_DIR, SAMPLE_RATE, FILENAME_MAX_LEN
+from typing import Optional
 
 
 def get_smart_path(folder_name: str) -> Optional[str]:
@@ -118,21 +119,21 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def save_stt_results(text: str, segments: List[dict], audio_filename: str) -> dict:
-    """保存 STT 结果，生成 TXT 和 SRT 文件"""
+def save_stt_results(text: str, segments: List[dict], audio_filename: str, audio_path: Optional[str] = None) -> dict:
+    """保存 STT 结果，生成 TXT、SRT 文件，并保存原始音频文件"""
     os.makedirs(STT_OUTPUT_DIR, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = os.path.splitext(os.path.basename(audio_filename))[0]
     base_name = re.sub(r'[^\w\s-]', '', base_name)[:FILENAME_MAX_LEN].strip().replace(' ', '_') or "audio"
     
-    # 保存 TXT 文件
+    # 保存 TXT 文件（纯文本，无时间戳）
     txt_filename = f"{timestamp}_{base_name}.txt"
     txt_path = os.path.join(STT_OUTPUT_DIR, txt_filename)
     with open(txt_path, 'w', encoding='utf-8') as f:
         f.write(text)
     
-    # 保存 SRT 文件
+    # 保存 SRT 文件（带时间戳）
     srt_filename = f"{timestamp}_{base_name}.srt"
     srt_path = os.path.join(STT_OUTPUT_DIR, srt_filename)
     with open(srt_path, 'w', encoding='utf-8') as f:
@@ -149,8 +150,23 @@ def save_stt_results(text: str, segments: List[dict], audio_filename: str) -> di
                 f.write(f"[置信度: {confidence:.2%}]\n")
             f.write("\n")
     
-    return {
+    # 保存原始音频文件（如果提供了音频路径）
+    audio_output_path = None
+    if audio_path and os.path.exists(audio_path):
+        # 获取原始音频文件的扩展名
+        audio_ext = os.path.splitext(audio_path)[1] or ".wav"
+        audio_filename_output = f"{timestamp}_{base_name}{audio_ext}"
+        audio_output_path = os.path.join(STT_OUTPUT_DIR, audio_filename_output)
+        # 复制音频文件到输出目录
+        shutil.copy2(audio_path, audio_output_path)
+    
+    # 返回相对路径
+    result = {
         "txt_path": os.path.relpath(txt_path, BASE_DIR),
         "srt_path": os.path.relpath(srt_path, BASE_DIR)
     }
+    if audio_output_path:
+        result["audio_path"] = os.path.relpath(audio_output_path, BASE_DIR)
+    
+    return result
 
