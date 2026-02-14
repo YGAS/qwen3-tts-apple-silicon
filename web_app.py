@@ -359,6 +359,39 @@ def load_asr_model_cached(model_key: str = None):
             raise HTTPException(status_code=500, detail=f"ASR 模型加载失败: {str(e)}")
 
 
+def cleanup_temp_files(*paths):
+    """清理临时文件或目录"""
+    for path in paths:
+        if path and os.path.exists(path):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+            except Exception as e:
+                print(f"[清理临时文件] 警告: 无法删除 {path}: {e}")
+
+
+def cleanup_stt_temp_files(temp_output_dir: str):
+    """清理 STT 临时文件（包括目录和可能直接创建的文件）"""
+    if not temp_output_dir:
+        return
+    
+    # 清理目录
+    cleanup_temp_files(temp_output_dir)
+    
+    # 清理可能直接在当前目录创建的文件（generate_transcription 可能直接创建文件）
+    # 检查当前目录下所有以 temp_output_dir 开头的文件
+    base_name = os.path.basename(temp_output_dir)
+    current_dir = os.getcwd()
+    try:
+        for filename in os.listdir(current_dir):
+            if filename.startswith(base_name) and os.path.isfile(os.path.join(current_dir, filename)):
+                cleanup_temp_files(os.path.join(current_dir, filename))
+    except Exception as e:
+        print(f"[清理STT临时文件] 警告: 无法列出目录 {current_dir}: {e}")
+
+
 def convert_audio_if_needed(input_path: str) -> Optional[str]:
     """转换音频为 WAV 格式"""
     if not os.path.exists(input_path):
@@ -384,6 +417,8 @@ def convert_audio_if_needed(input_path: str) -> Optional[str]:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         return temp_wav
     except (subprocess.CalledProcessError, FileNotFoundError):
+        # 转换失败时清理临时文件
+        cleanup_temp_files(temp_wav)
         return None
 
 
@@ -402,8 +437,8 @@ def save_audio_file(temp_folder: str, subfolder: str, text_snippet: str) -> str:
     if os.path.exists(source_file):
         shutil.move(source_file, final_path)
 
-    if os.path.exists(temp_folder):
-        shutil.rmtree(temp_folder, ignore_errors=True)
+    # 清理临时目录
+    cleanup_temp_files(temp_folder)
 
     # 返回相对路径（相对于 BASE_DIR）
     relative_path = os.path.relpath(final_path, BASE_DIR)
@@ -595,6 +630,7 @@ async def text_to_speech(request: TTSRequest):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="文案不能为空")
     
+    temp_dir = None
     try:
         model = load_model_cached("custom", request.use_lite)
         model_info = MODELS["custom"]["lite" if request.use_lite else "pro"]
@@ -610,6 +646,7 @@ async def text_to_speech(request: TTSRequest):
         )
         
         audio_path = save_audio_file(temp_dir, model_info["output_subfolder"], request.text)
+        temp_dir = None  # save_audio_file 已经清理了，标记为 None
         
         # 保存历史记录
         history_item = {
@@ -634,6 +671,9 @@ async def text_to_speech(request: TTSRequest):
         import traceback
         print(f"TTS Error: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
+        # 确保清理临时文件
+        if temp_dir:
+            cleanup_temp_files(temp_dir)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -643,6 +683,7 @@ async def preview_voice(request: TTSRequest):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="文案不能为空")
     
+    temp_dir = None
     try:
         model = load_model_cached("custom", request.use_lite)
         
@@ -669,8 +710,8 @@ async def preview_voice(request: TTSRequest):
             shutil.move(source_file, audio_path)
         
         # 清理临时目录
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        cleanup_temp_files(temp_dir)
+        temp_dir = None
         
         gc.collect()
         
@@ -686,6 +727,9 @@ async def preview_voice(request: TTSRequest):
         import traceback
         print(f"Preview Error: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
+        # 确保清理临时文件
+        if temp_dir:
+            cleanup_temp_files(temp_dir)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -745,18 +789,22 @@ async def clone_voice(
     
     safe_name = re.sub(r'[^\w\s-]', '', name).strip().replace(' ', '_')
     
-    # 保存上传的音频
-    temp_input = f"temp_upload_{int(time.time())}_{audio.filename}"
-    with open(temp_input, "wb") as f:
-        f.write(await audio.read())
-    
-    # 转换为 WAV
-    wav_path = convert_audio_if_needed(temp_input)
-    if not wav_path:
-        os.remove(temp_input)
-        raise HTTPException(status_code=400, detail="音频转换失败")
+    temp_input = None
+    wav_path = None
     
     try:
+        # 保存上传的音频
+        temp_input = f"temp_upload_{int(time.time())}_{audio.filename}"
+        with open(temp_input, "wb") as f:
+            f.write(await audio.read())
+        
+        # 转换为 WAV
+        wav_path = convert_audio_if_needed(temp_input)
+        if not wav_path:
+            cleanup_temp_files(temp_input)
+            temp_input = None
+            raise HTTPException(status_code=400, detail="音频转换失败")
+        
         # 保存到 voices 目录
         os.makedirs(VOICES_DIR, exist_ok=True)
         target_wav = os.path.join(VOICES_DIR, f"{safe_name}.wav")
@@ -767,16 +815,25 @@ async def clone_voice(
             f.write(text)
         
         # 清理临时文件
-        os.remove(temp_input)
-        if wav_path != temp_input and os.path.exists(wav_path):
-            os.remove(wav_path)
+        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        temp_input = None
+        wav_path = None
         
         return {
             "success": True,
             "name": safe_name,
             "message": f"音色 '{safe_name}' 克隆成功"
         }
+    except HTTPException:
+        # HTTPException 需要重新抛出，但也要清理临时文件
+        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        raise
     except Exception as e:
+        import traceback
+        print(f"Clone Voice Error: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        # 确保清理临时文件
+        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -802,6 +859,7 @@ async def tts_with_cloned_voice(
         with open(ref_txt, 'r', encoding='utf-8') as f:
             ref_text = f.read().strip()
 
+    temp_dir = None
     try:
         model = load_model_cached("clone", use_lite)
 
@@ -828,8 +886,8 @@ async def tts_with_cloned_voice(
                 shutil.move(source_file, audio_path)
 
             # 清理临时目录
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
+            cleanup_temp_files(temp_dir)
+            temp_dir = None
 
             gc.collect()
 
@@ -845,6 +903,7 @@ async def tts_with_cloned_voice(
             # 正常模式，保存到 outputs 并记录历史
             model_info = MODELS["clone"]["lite" if use_lite else "pro"]
             audio_path = save_audio_file(temp_dir, model_info["output_subfolder"], text)
+            temp_dir = None  # save_audio_file 已经清理了，标记为 None
 
             # 保存历史记录
             history_item = {
@@ -866,6 +925,12 @@ async def tts_with_cloned_voice(
                 "history_id": history_item["id"]
             }
     except Exception as e:
+        import traceback
+        print(f"Clone TTS Error: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        # 确保清理临时文件
+        if temp_dir:
+            cleanup_temp_files(temp_dir)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -908,6 +973,10 @@ async def speech_to_text(
     if not audio.filename:
         raise HTTPException(status_code=400, detail="请上传音频文件")
     
+    temp_input = None
+    wav_path = None
+    temp_output_dir = None
+    
     try:
         # 保存上传的音频到临时文件
         temp_input = f"temp_stt_{int(time.time())}_{audio.filename}"
@@ -918,8 +987,14 @@ async def speech_to_text(
         # 转换为 WAV（如果需要）
         wav_path = convert_audio_if_needed(temp_input)
         if not wav_path:
-            os.remove(temp_input)
+            cleanup_temp_files(temp_input)
+            temp_input = None
             raise HTTPException(status_code=400, detail="音频转换失败，请检查文件格式")
+        
+        # 如果创建了转换文件，可以立即删除原始上传文件（不再需要）
+        if wav_path != temp_input:
+            cleanup_temp_files(temp_input)
+            temp_input = None  # 标记为已清理，避免重复清理
         
         # 加载 ASR 模型
         model = load_asr_model_cached(model_key)
@@ -1006,9 +1081,9 @@ async def speech_to_text(
             if language == "unknown" and hasattr(transcription, 'language'):
                 language = transcription.language
         finally:
-            # 清理临时输出目录
-            if os.path.exists(temp_output_dir):
-                shutil.rmtree(temp_output_dir, ignore_errors=True)
+            # 清理临时输出目录和可能直接创建的文件
+            cleanup_stt_temp_files(temp_output_dir)
+            temp_output_dir = None
         
         # 如果没有分段信息，尝试从文本创建基本分段
         if not processed_segments and text:
@@ -1046,9 +1121,9 @@ async def speech_to_text(
         save_history_item(history_item)
         
         # 清理临时文件
-        os.remove(temp_input)
-        if wav_path != temp_input and os.path.exists(wav_path):
-            os.remove(wav_path)
+        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        temp_input = None
+        wav_path = None
         
         gc.collect()
         
@@ -1062,11 +1137,17 @@ async def speech_to_text(
             "history_id": history_item["id"]
         }
     except HTTPException:
+        # HTTPException 需要重新抛出，但也要清理临时文件
+        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        cleanup_stt_temp_files(temp_output_dir)
         raise
     except Exception as e:
         import traceback
         print(f"STT Error: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
+        # 确保清理所有临时文件
+        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        cleanup_stt_temp_files(temp_output_dir)
         raise HTTPException(status_code=500, detail=f"语音转文字失败: {str(e)}")
 
 
