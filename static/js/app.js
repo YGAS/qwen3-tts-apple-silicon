@@ -7,6 +7,8 @@ let currentSpeaker = null;
 let currentSpeakerType = null; // 'preset' 或 'cloned'
 let speakers = [];
 let clonedAudioFile = null;
+let sttAudioFile = null; // STT 音频文件
+let lastSTTResult = null; // 最后一次 STT 结果
 
 // 语言标签映射
 const languageLabels = {
@@ -18,6 +20,10 @@ const languageLabels = {
 
 // 处理音频路径，支持绝对路径和相对路径
 function getAudioUrl(audioPath) {
+    // 如果 audioPath 为空或 undefined，返回空字符串
+    if (!audioPath || typeof audioPath !== 'string') {
+        return '';
+    }
     // 后端路由 /api/audio/{path:path} 会自动处理绝对路径和相对路径
     // 如果路径是绝对路径（以 / 开头），直接传递（后端会识别）
     // 如果路径是相对路径，也直接传递（后端会拼接 BASE_DIR）
@@ -45,6 +51,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (path === '/tts' || path === '/') {
         loadSpeakersForTTS();
         setupTTSListeners();
+    } else if (path === '/stt') {
+        setupSTTListeners();
     } else if (path === '/speakers') {
         loadSpeakersPage();
     } else if (path === '/clone') {
@@ -623,14 +631,20 @@ async function loadHistoryPage() {
         
         if (noHistory) noHistory.classList.add('hidden');
         
-        historyList.innerHTML = data.history.map(item => `
+        historyList.innerHTML = data.history.map(item => {
+            // STT 历史记录可能没有 audio_path（只保存文本和字幕文件）
+            const hasAudio = item.audio_path && item.type !== 'stt';
+            const audioUrl = getAudioUrl(item.audio_path);
+            
+            return `
             <div class="history-item">
                 <div class="history-header">
                     <div style="flex: 1;">
                         <p class="history-text">${escapeHtml(item.text)}</p>
                         <div class="history-meta">
-                            <span><i class="fas fa-user" style="margin-right: 4px;"></i>${item.speaker}</span>
+                            ${item.speaker ? `<span><i class="fas fa-user" style="margin-right: 4px;"></i>${item.speaker}</span>` : ''}
                             <span><i class="fas fa-clock" style="margin-right: 4px;"></i>${formatDate(item.created_at)}</span>
+                            ${item.type === 'stt' ? '<span><i class="fas fa-microphone" style="margin-right: 4px;"></i>语音转文字</span>' : ''}
                         </div>
                     </div>
                     <button onclick="deleteHistory('${item.id}')" 
@@ -638,15 +652,32 @@ async function loadHistoryPage() {
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
-                <audio src="${getAudioUrl(item.audio_path)}" controls></audio>
+                ${hasAudio ? `<audio src="${audioUrl}" controls></audio>` : ''}
                 <div style="margin-top: 12px;">
-                    <a href="${getAudioUrl(item.audio_path)}" download 
+                    ${hasAudio ? `
+                    <a href="${audioUrl}" download 
                        style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #4b5563; border-radius: 6px; color: #fff; text-decoration: none; font-size: 14px;">
-                        <i class="fas fa-download"></i>下载
+                        <i class="fas fa-download"></i>下载音频
                     </a>
+                    ` : ''}
+                    ${item.type === 'stt' ? `
+                    ${item.txt_path ? `
+                    <a href="/api/file/${item.txt_path}" download 
+                       style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #4b5563; border-radius: 6px; color: #fff; text-decoration: none; font-size: 14px; margin-left: 8px;">
+                        <i class="fas fa-file-alt"></i>下载 TXT
+                    </a>
+                    ` : ''}
+                    ${item.srt_path ? `
+                    <a href="/api/file/${item.srt_path}" download 
+                       style="display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #4b5563; border-radius: 6px; color: #fff; text-decoration: none; font-size: 14px; margin-left: 8px;">
+                        <i class="fas fa-file-alt"></i>下载 SRT
+                    </a>
+                    ` : ''}
+                    ` : ''}
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     } catch (error) {
         console.error('加载历史记录失败:', error);
     }
@@ -689,4 +720,192 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ========== 语音转文字页面功能 ==========
+
+function setupSTTListeners() {
+    const dropZone = document.getElementById('stt-drop-zone');
+    const fileInput = document.getElementById('stt-audio');
+    
+    if (!dropZone || !fileInput) return;
+    
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleSTTAudioFile(files[0]);
+        }
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleSTTAudioFile(e.target.files[0]);
+        }
+    });
+}
+
+function handleSTTAudioFile(file) {
+    if (!file.type.startsWith('audio/')) {
+        alert('请选择音频文件');
+        return;
+    }
+    
+    sttAudioFile = file;
+    const fileNameEl = document.getElementById('stt-file-name');
+    if (fileNameEl) {
+        fileNameEl.textContent = `已选择: ${file.name}`;
+        fileNameEl.classList.remove('hidden');
+    }
+    
+    // 隐藏之前的结果和错误
+    const resultDiv = document.getElementById('stt-result');
+    const errorDiv = document.getElementById('stt-error');
+    if (resultDiv) resultDiv.classList.add('hidden');
+    if (errorDiv) errorDiv.classList.add('hidden');
+}
+
+async function generateSTT() {
+    if (!sttAudioFile) {
+        alert('请上传音频文件');
+        return;
+    }
+    
+    const btn = document.getElementById('btn-stt-generate');
+    const retryBtn = document.getElementById('btn-stt-retry');
+    const resultDiv = document.getElementById('stt-result');
+    const errorDiv = document.getElementById('stt-error');
+    
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span> 识别中...';
+    btn.disabled = true;
+    if (retryBtn) retryBtn.style.display = 'none';
+    
+    // 隐藏之前的结果和错误
+    if (resultDiv) resultDiv.classList.add('hidden');
+    if (errorDiv) errorDiv.classList.add('hidden');
+    
+    try {
+        const formData = new FormData();
+        formData.append('audio', sttAudioFile);
+        
+        const response = await fetch('/api/stt', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            lastSTTResult = data;
+            
+            // 显示结果
+            if (resultDiv) {
+                const textEl = document.getElementById('stt-text');
+                const languageEl = document.getElementById('stt-language');
+                const segmentsEl = document.getElementById('stt-segments');
+                const txtDownload = document.getElementById('stt-download-txt');
+                const srtDownload = document.getElementById('stt-download-srt');
+                const toCloneBtn = document.getElementById('btn-stt-to-clone');
+                
+                if (textEl) textEl.textContent = data.text;
+                if (languageEl) {
+                    const langMap = {'zh': '中文', 'en': '英语', 'ja': '日语', 'ko': '韩语'};
+                    languageEl.textContent = langMap[data.language] || data.language;
+                }
+                
+                // 显示分段信息
+                if (segmentsEl && data.segments && data.segments.length > 0) {
+                    let segmentsHTML = '<div style="margin-top: 16px;"><label class="form-label">分段信息</label>';
+                    segmentsHTML += '<div style="max-height: 200px; overflow-y: auto;">';
+                    data.segments.forEach((seg, idx) => {
+                        const start = formatTime(seg.start);
+                        const end = formatTime(seg.end);
+                        const confidence = seg.confidence > 0 ? ` (${(seg.confidence * 100).toFixed(1)}%)` : '';
+                        segmentsHTML += `
+                            <div style="background-color: #374151; border-radius: 6px; padding: 12px; margin-bottom: 8px;">
+                                <div style="font-size: 12px; color: #9ca3af; margin-bottom: 4px;">
+                                    ${start} - ${end}${confidence}
+                                </div>
+                                <div style="color: #d1d5db;">${escapeHtml(seg.text)}</div>
+                            </div>
+                        `;
+                    });
+                    segmentsHTML += '</div></div>';
+                    segmentsEl.innerHTML = segmentsHTML;
+                }
+                
+                // 设置下载链接
+                if (txtDownload) {
+                    txtDownload.href = `/api/file/${data.txt_path}`;
+                    txtDownload.download = data.txt_path.split('/').pop();
+                }
+                if (srtDownload) {
+                    srtDownload.href = `/api/file/${data.srt_path}`;
+                    srtDownload.download = data.srt_path.split('/').pop();
+                }
+                
+                // 显示"用于克隆音色"按钮
+                if (toCloneBtn) {
+                    toCloneBtn.style.display = 'inline-flex';
+                }
+                
+                resultDiv.classList.remove('hidden');
+            }
+        } else {
+            throw new Error(data.detail || '识别失败');
+        }
+    } catch (error) {
+        console.error('STT 失败:', error);
+        const errorDiv = document.getElementById('stt-error');
+        const errorMsg = document.getElementById('stt-error-message');
+        if (errorDiv && errorMsg) {
+            errorMsg.textContent = `识别失败: ${error.message}`;
+            errorDiv.classList.remove('hidden');
+        }
+        if (retryBtn) retryBtn.style.display = 'inline-flex';
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
+}
+
+function retrySTT() {
+    if (sttAudioFile) {
+        generateSTT();
+    }
+}
+
+function formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = (seconds % 60).toFixed(1);
+    return `${mins}:${secs.padStart(4, '0')}`;
+}
+
+function sendToClone() {
+    if (!lastSTTResult || !sttAudioFile) {
+        alert('没有可用的识别结果');
+        return;
+    }
+    
+    // 跳转到克隆页面，并传递数据
+    const cloneUrl = `/clone?text=${encodeURIComponent(lastSTTResult.text)}`;
+    window.location.href = cloneUrl;
+    
+    // 使用 sessionStorage 存储数据，以便克隆页面使用
+    sessionStorage.setItem('stt_text', lastSTTResult.text);
+    sessionStorage.setItem('stt_audio_name', sttAudioFile.name);
 }

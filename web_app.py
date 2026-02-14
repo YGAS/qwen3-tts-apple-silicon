@@ -33,6 +33,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 try:
     from mlx_audio.tts.utils import load_model
     from mlx_audio.tts.generate import generate_audio
+    from mlx_audio.stt.utils import load_model as load_stt_model
+    from mlx_audio.stt.generate import generate_transcription
 except ImportError:
     print("Error: 'mlx_audio' library not found.")
     print("Run: source .venv/bin/activate")
@@ -44,6 +46,7 @@ BASE_OUTPUT_DIR = os.path.join(BASE_DIR, "outputs")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
+STT_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "STT")
 
 # Settings
 SAMPLE_RATE = 24000
@@ -63,6 +66,60 @@ MODELS = {
         "pro": {"folder": "Qwen3-TTS-12Hz-1.7B-Base-8bit", "output_subfolder": "Clones"},
         "lite": {"folder": "Qwen3-TTS-12Hz-0.6B-Base-8bit", "output_subfolder": "Clones"},
     },
+}
+
+# ASR Model Definitions - 语音转文字模型配置
+# mlx-audio 支持的 STT 模型类型：
+# - whisper: OpenAI Whisper 模型（推荐，多语言支持好）
+# - parakeet: NVIDIA Parakeet 模型
+# - voxtral: Voxtral 模型
+# - glmasr: GLM ASR 模型
+# - vibevoice_asr: VibeVoice ASR 模型
+# - wav2vec: Facebook Wav2Vec2 模型
+#
+# 配置说明：
+# - model_id: HuggingFace 模型 ID（从网络加载）或本地路径（从本地加载）
+# - folder: 本地模型文件夹名称（如果使用本地加载）
+# - type: 模型类型（whisper, parakeet, voxtral, glmasr, vibevoice_asr, wav2vec）
+# - default: 是否为默认模型
+#
+# 本地配置方式：
+# 1. 将模型下载到 models/ 目录下（参考 TTS 模型的目录结构）
+# 2. 设置 folder 为模型文件夹名称
+# 3. load_asr_model_cached 会自动从本地加载
+#
+# 网络配置方式：
+# 1. 设置 model_id 为 HuggingFace 模型 ID（如 "openai/whisper-base"）
+# 2. 首次加载会自动下载并缓存到 ~/.cache/huggingface/hub/
+# 3. 后续加载会使用本地缓存
+ASR_MODELS = {
+    # Qwen3-ASR 模型（本地加载）
+    "qwen3_asr_0.6b": {
+        "folder": "Qwen3-ASR-0.6B-8bit",  # 本地文件夹名称
+        "type": "qwen3_asr",
+        "default": True  # 默认模型
+    },
+    # Whisper 模型示例（备用，已注释）
+    # "whisper_base": {
+    #     "model_id": "openai/whisper-base",  # 从网络加载
+    #     "folder": "whisper-base",  # 本地文件夹名称（如果使用本地加载）
+    #     "type": "whisper",
+    #     "default": False
+    # },
+    # Parakeet 模型示例
+    # "parakeet": {
+    #     "model_id": "mlx-community/parakeet-tdt-1.1b",
+    #     "folder": "parakeet-tdt-1.1b",
+    #     "type": "parakeet",
+    #     "default": False
+    # },
+    # Wav2Vec2 模型示例
+    # "wav2vec2": {
+    #     "model_id": "facebook/wav2vec2-base-960h",
+    #     "folder": "wav2vec2-base-960h",
+    #     "type": "wav2vec",
+    #     "default": False
+    # },
 }
 
 # 音色映射表
@@ -120,36 +177,25 @@ async def lifespan(app: FastAPI):
             print(f"[启动] ⚠ {name} 预加载失败: {e}")
             return False
     
-    # 使用线程池预加载模型（后台执行，不阻塞启动）
-    print("[启动] 预加载常用模型（后台进行，不影响启动速度）...")
+    # 禁用启动时预加载模型（MLX/Metal 在并发加载时会出现命令缓冲区冲突）
+    # 改为按需加载，首次使用时自动加载并缓存
+    # 这样可以避免启动时的 Metal 错误，同时保持模型缓存机制
+    print("[启动] 模型将按需加载（首次使用时自动缓存）")
     
-    async def preload_models():
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            # 预加载预设音色模型（Lite版本，因为最常用）
-            future1 = loop.run_in_executor(
-                executor, 
-                preload_model_sync, 
-                "custom", True, "预设音色模型 (Lite)"
-            )
-            # 预加载克隆音色模型（Lite版本）
-            future2 = loop.run_in_executor(
-                executor,
-                preload_model_sync,
-                "clone", True, "克隆音色模型 (Lite)"
-            )
-            
-            # 等待所有模型加载完成（不阻塞启动）
-            await asyncio.gather(future1, future2, return_exceptions=True)
-            print("[启动] 模型预加载任务已提交（后台进行中）")
-    
-    # 在后台任务中预加载模型（不等待完成，让应用快速启动）
-    task = asyncio.create_task(preload_models())
+    # 如果需要预加载，可以取消下面的注释，但必须串行执行
+    # async def preload_models():
+    #     await asyncio.sleep(1)  # 等待应用完全启动
+    #     try:
+    #         preload_model_sync("custom", True, "预设音色模型 (Lite)")
+    #     except Exception as e:
+    #         print(f"[启动] ⚠ 模型预加载失败: {e}")
+    # task = asyncio.create_task(preload_models())
+    task = None
     
     yield  # 应用运行期间
     
     # 如果应用关闭时模型还在加载，取消任务
-    if not task.done():
+    if task and not task.done():
         task.cancel()
         try:
             await task
@@ -179,7 +225,9 @@ app.add_middleware(
 
 # 缓存的模型
 _cached_models = {}
+_cached_asr_models = {}  # ASR 模型缓存
 _model_loading_lock = {}  # 用于防止并发加载同一模型
+_asr_model_loading_lock = {}  # ASR 模型加载锁
 
 
 # Pydantic 模型
@@ -257,6 +305,60 @@ def load_model_cached(mode: str, use_lite: bool = False):
         return _cached_models[key]
 
 
+def load_asr_model_cached(model_key: str = None):
+    """加载并缓存 ASR 模型（仅从本地加载）"""
+    import threading
+    
+    # 如果没有指定模型，使用默认模型
+    if model_key is None:
+        for key, config in ASR_MODELS.items():
+            if config.get("default", False):
+                model_key = key
+                break
+        if model_key is None:
+            # 如果没有默认模型，使用第一个
+            model_key = list(ASR_MODELS.keys())[0]
+    
+    if model_key not in ASR_MODELS:
+        raise HTTPException(status_code=500, detail=f"ASR 模型配置错误: {model_key}")
+    
+    # 如果模型已缓存，直接返回
+    if model_key in _cached_asr_models:
+        return _cached_asr_models[model_key]
+    
+    # 使用锁防止并发加载同一模型
+    if model_key not in _asr_model_loading_lock:
+        _asr_model_loading_lock[model_key] = threading.Lock()
+    
+    with _asr_model_loading_lock[model_key]:
+        # 双重检查
+        if model_key in _cached_asr_models:
+            return _cached_asr_models[model_key]
+        
+        model_info = ASR_MODELS[model_key]
+        
+        # 只从本地加载（参考 TTS 的实现方式）
+        folder = model_info.get("folder")
+        if not folder:
+            raise HTTPException(status_code=404, detail=f"ASR 模型配置错误: 未找到本地文件夹配置")
+        
+        model_path = get_smart_path(folder)
+        if not model_path:
+            raise HTTPException(status_code=404, detail=f"ASR 模型未找到: {folder}，请确认模型已下载到 models/ 目录")
+        
+        print(f"[ASR模型加载] 从本地加载模型: {model_key} ({model_path})")
+        try:
+            # mlx-audio 0.3.2+ 已支持 qwen3_asr，直接加载即可
+            _cached_asr_models[model_key] = load_stt_model(model_path)
+            print(f"[ASR模型加载] 本地模型加载完成: {model_key}")
+            return _cached_asr_models[model_key]
+        except Exception as e:
+            import traceback
+            print(f"[ASR模型加载] 本地加载失败: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"ASR 模型加载失败: {str(e)}")
+
+
 def convert_audio_if_needed(input_path: str) -> Optional[str]:
     """转换音频为 WAV 格式"""
     if not os.path.exists(input_path):
@@ -306,6 +408,54 @@ def save_audio_file(temp_folder: str, subfolder: str, text_snippet: str) -> str:
     # 返回相对路径（相对于 BASE_DIR）
     relative_path = os.path.relpath(final_path, BASE_DIR)
     return relative_path
+
+
+def format_timestamp(seconds: float) -> str:
+    """将秒数转换为 SRT 时间戳格式 (HH:MM:SS,mmm)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def save_stt_results(text: str, segments: List[dict], audio_filename: str) -> dict:
+    """保存 STT 结果，生成 TXT 和 SRT 文件"""
+    os.makedirs(STT_OUTPUT_DIR, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # 从音频文件名提取基础名称
+    base_name = os.path.splitext(os.path.basename(audio_filename))[0]
+    base_name = re.sub(r'[^\w\s-]', '', base_name)[:FILENAME_MAX_LEN].strip().replace(' ', '_') or "audio"
+    
+    # 保存 TXT 文件（纯文本，无时间戳）
+    txt_filename = f"{timestamp}_{base_name}.txt"
+    txt_path = os.path.join(STT_OUTPUT_DIR, txt_filename)
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(text)
+    
+    # 保存 SRT 文件（带时间戳）
+    srt_filename = f"{timestamp}_{base_name}.srt"
+    srt_path = os.path.join(STT_OUTPUT_DIR, srt_filename)
+    with open(srt_path, 'w', encoding='utf-8') as f:
+        for i, segment in enumerate(segments, 1):
+            start_time = format_timestamp(segment.get('start', 0))
+            end_time = format_timestamp(segment.get('end', 0))
+            segment_text = segment.get('text', '').strip()
+            confidence = segment.get('confidence', 0)
+            
+            f.write(f"{i}\n")
+            f.write(f"{start_time} --> {end_time}\n")
+            f.write(f"{segment_text}\n")
+            if confidence > 0:
+                f.write(f"[置信度: {confidence:.2%}]\n")
+            f.write("\n")
+    
+    # 返回相对路径
+    return {
+        "txt_path": os.path.relpath(txt_path, BASE_DIR),
+        "srt_path": os.path.relpath(srt_path, BASE_DIR)
+    }
 
 
 def get_history() -> List[dict]:
@@ -721,8 +871,16 @@ async def tts_with_cloned_voice(
 
 @app.get("/api/history")
 async def get_history_api():
-    """获取生成历史"""
+    """获取生成历史（包括 TTS 和 STT）"""
     return {"history": get_history()}
+
+
+@app.get("/api/history/stt")
+async def get_stt_history_api():
+    """获取 STT 历史记录"""
+    history = get_history()
+    stt_history = [item for item in history if item.get("type") == "stt"]
+    return {"history": stt_history}
 
 
 @app.delete("/api/history/{history_id}")
@@ -739,6 +897,177 @@ async def delete_history(history_id: str):
                 json.dump(history, f, ensure_ascii=False, indent=2)
             return {"success": True}
     raise HTTPException(status_code=404, detail="历史记录未找到")
+
+
+@app.post("/api/stt")
+async def speech_to_text(
+    audio: UploadFile = File(...),
+    model_key: str = Form(None)
+):
+    """语音转文字"""
+    if not audio.filename:
+        raise HTTPException(status_code=400, detail="请上传音频文件")
+    
+    try:
+        # 保存上传的音频到临时文件
+        temp_input = f"temp_stt_{int(time.time())}_{audio.filename}"
+        with open(temp_input, "wb") as f:
+            content = await audio.read()
+            f.write(content)
+        
+        # 转换为 WAV（如果需要）
+        wav_path = convert_audio_if_needed(temp_input)
+        if not wav_path:
+            os.remove(temp_input)
+            raise HTTPException(status_code=400, detail="音频转换失败，请检查文件格式")
+        
+        # 加载 ASR 模型
+        model = load_asr_model_cached(model_key)
+        
+        # 执行转录
+        print(f"[STT] 开始转录: {wav_path}")
+        # 使用临时输出文件，然后读取结果
+        temp_output_dir = f"temp_stt_output_{int(time.time())}"
+        os.makedirs(temp_output_dir, exist_ok=True)
+        
+        try:
+            # generate_transcription 使用 audio 参数（不是 audio_path）
+            # 返回的是 transcription 对象，有 .text 属性
+            transcription = generate_transcription(
+                model=model,
+                audio=wav_path,  # 使用 audio 参数（音频文件路径）
+                output_path=temp_output_dir,
+                format="txt",  # 先保存为 txt
+                verbose=True
+            )
+            
+            # 从 transcription 对象获取文本
+            text = ""
+            language = "unknown"
+            processed_segments = []
+            
+            # 获取完整文本
+            if hasattr(transcription, 'text'):
+                text = transcription.text
+            elif isinstance(transcription, str):
+                text = transcription
+            else:
+                # 尝试从输出文件读取
+                output_file = os.path.join(temp_output_dir, "transcript.txt")
+                if not os.path.exists(output_file):
+                    output_file = os.path.join(temp_output_dir, "transcription.txt")
+                if os.path.exists(output_file):
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        text = f.read().strip()
+            
+            # 获取分段信息
+            if hasattr(transcription, 'segments'):
+                segments = transcription.segments
+            elif hasattr(transcription, 'chunks'):
+                segments = transcription.chunks
+            else:
+                segments = []
+            
+            # 处理 segments
+            if segments:
+                for i, seg in enumerate(segments):
+                    # 处理不同格式的 segment
+                    if isinstance(seg, dict):
+                        seg_text = seg.get("text", seg.get("words", ""))
+                        seg_start = seg.get("start", seg.get("start_time", 0.0))
+                        seg_end = seg.get("end", seg.get("end_time", 0.0))
+                        seg_conf = seg.get("confidence", seg.get("score", 0.0))
+                    elif hasattr(seg, '__dict__'):
+                        seg_text = getattr(seg, 'text', getattr(seg, 'words', ''))
+                        seg_start = getattr(seg, 'start', getattr(seg, 'start_time', 0.0))
+                        seg_end = getattr(seg, 'end', getattr(seg, 'end_time', 0.0))
+                        seg_conf = getattr(seg, 'confidence', getattr(seg, 'score', 0.0))
+                    else:
+                        seg_text = str(seg)
+                        seg_start = 0.0
+                        seg_end = 0.0
+                        seg_conf = 0.0
+                    
+                    processed_segments.append({
+                        "id": i,
+                        "start": float(seg_start),
+                        "end": float(seg_end),
+                        "text": seg_text,
+                        "confidence": float(seg_conf)
+                    })
+                
+                # 尝试从第一个 segment 获取语言信息
+                if processed_segments and isinstance(segments[0], dict):
+                    language = segments[0].get("language", "unknown")
+                elif processed_segments and hasattr(segments[0], 'language'):
+                    language = getattr(segments[0], 'language', 'unknown')
+            
+            # 尝试从 transcription 对象获取语言
+            if language == "unknown" and hasattr(transcription, 'language'):
+                language = transcription.language
+        finally:
+            # 清理临时输出目录
+            if os.path.exists(temp_output_dir):
+                shutil.rmtree(temp_output_dir, ignore_errors=True)
+        
+        # 如果没有分段信息，尝试从文本创建基本分段
+        if not processed_segments and text:
+            # 简单分段：按句号、问号、感叹号分割
+            sentences = re.split(r'[。！？.!?]', text)
+            current_time = 0.0
+            for i, sentence in enumerate(sentences):
+                if sentence.strip():
+                    # 估算每句话的时间（假设每分钟150字）
+                    duration = len(sentence) / 25.0  # 约25字/秒
+                    processed_segments.append({
+                        "id": i,
+                        "start": current_time,
+                        "end": current_time + duration,
+                        "text": sentence.strip(),
+                        "confidence": 0.0
+                    })
+                    current_time += duration
+        
+        # 保存结果文件
+        file_paths = save_stt_results(text, processed_segments, audio.filename)
+        
+        # 保存历史记录
+        history_item = {
+            "id": str(uuid.uuid4()),
+            "type": "stt",
+            "audio_filename": audio.filename,
+            "text": text,
+            "language": language,
+            "segments": processed_segments,
+            "txt_path": file_paths["txt_path"],
+            "srt_path": file_paths["srt_path"],
+            "created_at": datetime.now().isoformat()
+        }
+        save_history_item(history_item)
+        
+        # 清理临时文件
+        os.remove(temp_input)
+        if wav_path != temp_input and os.path.exists(wav_path):
+            os.remove(wav_path)
+        
+        gc.collect()
+        
+        return {
+            "success": True,
+            "text": text,
+            "language": language,
+            "segments": processed_segments,
+            "txt_path": file_paths["txt_path"],
+            "srt_path": file_paths["srt_path"],
+            "history_id": history_item["id"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"STT Error: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"语音转文字失败: {str(e)}")
 
 
 @app.delete("/api/voices/{voice_name}")
@@ -773,6 +1102,31 @@ async def serve_audio(path: str):
     if os.path.exists(full_path) and full_path.endswith('.wav'):
         return FileResponse(full_path, media_type="audio/wav")
     raise HTTPException(status_code=404, detail="音频文件未找到")
+
+
+@app.get("/api/file/{path:path}")
+async def serve_file(path: str):
+    """提供文件下载（TXT、SRT 等）"""
+    # 支持绝对路径和相对路径
+    if path.startswith('/'):
+        full_path = path
+    else:
+        full_path = os.path.join(BASE_DIR, path)
+
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="文件未找到")
+    
+    # 根据文件扩展名设置媒体类型
+    ext = os.path.splitext(full_path)[1].lower()
+    media_types = {
+        '.txt': 'text/plain',
+        '.srt': 'text/srt',
+        '.vtt': 'text/vtt',
+        '.json': 'application/json'
+    }
+    media_type = media_types.get(ext, 'application/octet-stream')
+    
+    return FileResponse(full_path, media_type=media_type)
 
 
 @app.delete("/api/audio/cleanup")
@@ -1213,6 +1567,10 @@ def get_html_template():
                     <i class="fas fa-microphone-lines"></i>
                     <span>文字转语音</span>
                 </a>
+                <a href="/stt" class="nav-item {{ 'active' if page == 'stt' else '' }}">
+                    <i class="fas fa-language"></i>
+                    <span>语音转文字</span>
+                </a>
                 <a href="/speakers" class="nav-item {{ 'active' if page == 'speakers' else '' }}">
                     <i class="fas fa-users"></i>
                     <span>音色库</span>
@@ -1411,6 +1769,79 @@ def get_clone_page():
 '''
 
 
+def get_stt_page():
+    return '''
+<h1 class="page-title">语音转文字</h1>
+
+<div style="max-width: 800px;">
+    <!-- 音频上传 -->
+    <div class="card">
+        <label class="form-label">上传音频文件</label>
+        <div class="drop-zone" id="stt-drop-zone">
+            <i class="fas fa-cloud-upload-alt" style="font-size: 48px; color: #6b7280; margin-bottom: 16px;"></i>
+            <p style="color: #d1d5db; margin-bottom: 8px;">拖拽音频文件到此处，或点击上传</p>
+            <p style="font-size: 13px; color: #6b7280;">支持 MP3, WAV, M4A, FLAC 等格式</p>
+            <input type="file" id="stt-audio" accept="audio/*" style="display: none;">
+        </div>
+        <p id="stt-file-name" class="hidden" style="margin-top: 12px; color: #22c55e; font-size: 14px;"></p>
+    </div>
+
+    <!-- 按钮 -->
+    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+        <button class="btn btn-primary" id="btn-stt-generate" onclick="generateSTT()">
+            <i class="fas fa-microphone-lines"></i>
+            <span>开始识别</span>
+        </button>
+        <button class="btn btn-secondary" id="btn-stt-retry" onclick="retrySTT()" style="display: none;">
+            <i class="fas fa-redo"></i>
+            <span>重试</span>
+        </button>
+    </div>
+
+    <!-- 结果 -->
+    <div id="stt-result" class="card hidden">
+        <label class="form-label">识别结果</label>
+        
+        <!-- 文本预览 -->
+        <div style="background-color: #374151; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 13px; color: #9ca3af;">识别文本</span>
+                <span id="stt-language" style="font-size: 12px; color: #22c55e;"></span>
+            </div>
+            <div id="stt-text" style="color: #d1d5db; line-height: 1.6; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></div>
+        </div>
+
+        <!-- 分段信息 -->
+        <div id="stt-segments" style="margin-bottom: 16px;"></div>
+
+        <!-- 下载按钮 -->
+        <div style="display: flex; gap: 12px;">
+            <a id="stt-download-txt" href="#" download class="btn btn-secondary" style="text-decoration: none;">
+                <i class="fas fa-file-alt"></i>
+                <span>下载 TXT</span>
+            </a>
+            <a id="stt-download-srt" href="#" download class="btn btn-secondary" style="text-decoration: none;">
+                <i class="fas fa-file-video"></i>
+                <span>下载 SRT</span>
+            </a>
+            <button class="btn btn-primary" id="btn-stt-to-clone" onclick="sendToClone()" style="display: none;">
+                <i class="fas fa-copy"></i>
+                <span>用于克隆音色</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 错误信息 -->
+    <div id="stt-error" class="card hidden" style="background-color: rgba(220, 38, 38, 0.1); border: 1px solid #dc2626;">
+        <div style="color: #dc2626;">
+            <i class="fas fa-exclamation-circle"></i>
+            <span id="stt-error-message"></span>
+        </div>
+    </div>
+</div>
+'''
+
+
 def get_history_page():
     return '''
 <h1 class="page-title">生成历史</h1>
@@ -1453,6 +1884,7 @@ async def speakers_page():
     template = get_html_template()
     content = template.replace('{{ content | safe }}', get_speakers_page())
     content = content.replace("{{ 'active' if page == 'tts' else '' }}", "")
+    content = content.replace("{{ 'active' if page == 'stt' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'speakers' else '' }}", "active")
     content = content.replace("{{ 'active' if page == 'clone' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'history' else '' }}", "")
@@ -1465,8 +1897,22 @@ async def clone_page():
     template = get_html_template()
     content = template.replace('{{ content | safe }}', get_clone_page())
     content = content.replace("{{ 'active' if page == 'tts' else '' }}", "")
+    content = content.replace("{{ 'active' if page == 'stt' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'speakers' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'clone' else '' }}", "active")
+    content = content.replace("{{ 'active' if page == 'history' else '' }}", "")
+    return content
+
+
+@app.get("/stt", response_class=HTMLResponse)
+async def stt_page():
+    """语音转文字页面"""
+    template = get_html_template()
+    content = template.replace('{{ content | safe }}', get_stt_page())
+    content = content.replace("{{ 'active' if page == 'tts' else '' }}", "")
+    content = content.replace("{{ 'active' if page == 'stt' else '' }}", "active")
+    content = content.replace("{{ 'active' if page == 'speakers' else '' }}", "")
+    content = content.replace("{{ 'active' if page == 'clone' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'history' else '' }}", "")
     return content
 
@@ -1477,6 +1923,7 @@ async def history_page():
     template = get_html_template()
     content = template.replace('{{ content | safe }}', get_history_page())
     content = content.replace("{{ 'active' if page == 'tts' else '' }}", "")
+    content = content.replace("{{ 'active' if page == 'stt' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'speakers' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'clone' else '' }}", "")
     content = content.replace("{{ 'active' if page == 'history' else '' }}", "active")
