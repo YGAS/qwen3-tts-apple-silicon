@@ -9,7 +9,7 @@ import time
 import re
 from datetime import datetime
 from typing import Optional, List
-from config import BASE_DIR, BASE_OUTPUT_DIR, STT_OUTPUT_DIR, MODELS_DIR, SAMPLE_RATE, FILENAME_MAX_LEN
+from config import BASE_DIR, BASE_OUTPUT_DIR, STT_OUTPUT_DIR, MODELS_DIR, SAMPLE_RATE, FILENAME_MAX_LEN, TMP_DIR
 from typing import Optional
 
 
@@ -26,6 +26,25 @@ def get_smart_path(folder_name: str) -> Optional[str]:
             return os.path.join(snapshots_dir, subfolders[0])
 
     return full_path
+
+
+def get_temp_path(prefix: str = "temp", suffix: str = "") -> str:
+    """获取临时文件或目录路径（在 tmp 目录下）
+    
+    Args:
+        prefix: 文件名前缀
+        suffix: 文件名后缀（如果为空，则返回目录路径）
+    
+    Returns:
+        临时文件或目录的完整路径
+    """
+    os.makedirs(TMP_DIR, exist_ok=True)
+    timestamp = int(time.time())
+    if suffix:
+        # 返回文件路径
+        return os.path.join(TMP_DIR, f"{prefix}_{timestamp}_{suffix}")
+    # 返回目录路径
+    return os.path.join(TMP_DIR, f"{prefix}_{timestamp}")
 
 
 def cleanup_temp_files(*paths):
@@ -49,15 +68,21 @@ def cleanup_stt_temp_files(temp_output_dir: str):
     # 清理目录
     cleanup_temp_files(temp_output_dir)
     
-    # 清理可能直接在当前目录创建的文件
+    # 清理可能直接在当前目录创建的文件（向后兼容，但应该都在 tmp 目录下）
     base_name = os.path.basename(temp_output_dir)
     current_dir = os.getcwd()
     try:
+        # 先检查 tmp 目录
+        if os.path.exists(TMP_DIR):
+            for filename in os.listdir(TMP_DIR):
+                if filename.startswith(base_name) and os.path.isfile(os.path.join(TMP_DIR, filename)):
+                    cleanup_temp_files(os.path.join(TMP_DIR, filename))
+        # 向后兼容：检查当前目录（旧代码可能创建的文件）
         for filename in os.listdir(current_dir):
             if filename.startswith(base_name) and os.path.isfile(os.path.join(current_dir, filename)):
                 cleanup_temp_files(os.path.join(current_dir, filename))
     except Exception as e:
-        print(f"[清理STT临时文件] 警告: 无法列出目录 {current_dir}: {e}")
+        print(f"[清理STT临时文件] 警告: 无法列出目录: {e}")
 
 
 def convert_audio_if_needed(input_path: str) -> Optional[str]:
@@ -76,7 +101,8 @@ def convert_audio_if_needed(input_path: str) -> Optional[str]:
         except wave.Error:
             pass
 
-    temp_wav = os.path.join(os.getcwd(), f"temp_convert_{int(time.time())}.wav")
+    # 在 tmp 目录下创建临时文件
+    temp_wav = get_temp_path("temp_convert", f"{name}.wav")
     
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", input_path,
            "-ar", str(SAMPLE_RATE), "-ac", "1", "-c:a", "pcm_s16le", temp_wav]

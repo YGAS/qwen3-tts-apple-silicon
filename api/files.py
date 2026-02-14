@@ -47,13 +47,13 @@ async def serve_file(path: str):
 
 @router.delete("/audio/cleanup")
 async def cleanup_temp_audio():
-    """清理临时音频文件"""
-    temp_audio_dir = os.path.join(BASE_DIR, "temp_audio")
-    if os.path.exists(temp_audio_dir):
-        for f in os.listdir(temp_audio_dir):
+    """清理临时音频文件（预览文件）"""
+    from config import TMP_DIR
+    if os.path.exists(TMP_DIR):
+        for f in os.listdir(TMP_DIR):
             if f.startswith('preview_') and f.endswith('.wav'):
                 try:
-                    os.remove(os.path.join(temp_audio_dir, f))
+                    os.remove(os.path.join(TMP_DIR, f))
                 except:
                     pass
     return {"success": True}

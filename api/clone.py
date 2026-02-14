@@ -11,9 +11,9 @@ import traceback
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from mlx_audio.tts.generate import generate_audio
-from config import BASE_DIR, VOICES_DIR, MODELS
+from config import BASE_DIR, VOICES_DIR, MODELS, TMP_DIR
 from models import load_model_cached
-from utils import cleanup_temp_files, convert_audio_if_needed, save_audio_file
+from utils import cleanup_temp_files, convert_audio_if_needed, save_audio_file, get_temp_path
 from history import save_history_item
 
 router = APIRouter()
@@ -24,7 +24,8 @@ async def clone_voice(
     name: str = Form(...),
     text: str = Form(...),
     language: str = Form("English"),
-    audio: UploadFile = File(...)
+    audio: UploadFile = File(None),
+    audio_path: str = Form(None)
 ):
     """克隆声音"""
     if not name.strip() or not text.strip():
@@ -36,16 +37,34 @@ async def clone_voice(
     wav_path = None
     
     try:
-        temp_input = f"temp_upload_{int(time.time())}_{audio.filename}"
-        with open(temp_input, "wb") as f:
-            f.write(await audio.read())
+        # 优先使用 audio_path，如果没有则使用上传的文件
+        if audio_path:
+            # 使用提供的文件路径
+            full_audio_path = os.path.join(BASE_DIR, audio_path) if not os.path.isabs(audio_path) else audio_path
+            if not os.path.exists(full_audio_path):
+                raise HTTPException(status_code=404, detail=f"音频文件未找到: {audio_path}")
+            
+            # 转换为 WAV
+            wav_path = convert_audio_if_needed(full_audio_path)
+            if not wav_path:
+                raise HTTPException(status_code=400, detail="音频转换失败")
+        elif audio:
+            # 保存上传的音频到 tmp 目录
+            safe_filename = re.sub(r'[^\w\s.-]', '', audio.filename).strip()
+            temp_input = get_temp_path("temp_upload", safe_filename)
+            with open(temp_input, "wb") as f:
+                f.write(await audio.read())
+            
+            # 转换为 WAV
+            wav_path = convert_audio_if_needed(temp_input)
+            if not wav_path:
+                cleanup_temp_files(temp_input)
+                temp_input = None
+                raise HTTPException(status_code=400, detail="音频转换失败")
+        else:
+            raise HTTPException(status_code=400, detail="请提供音频文件或音频文件路径")
         
-        wav_path = convert_audio_if_needed(temp_input)
-        if not wav_path:
-            cleanup_temp_files(temp_input)
-            temp_input = None
-            raise HTTPException(status_code=400, detail="音频转换失败")
-        
+        # 保存到 voices 目录
         os.makedirs(VOICES_DIR, exist_ok=True)
         target_wav = os.path.join(VOICES_DIR, f"{safe_name}.wav")
         target_txt = os.path.join(VOICES_DIR, f"{safe_name}.txt")
@@ -54,7 +73,13 @@ async def clone_voice(
         with open(target_txt, "w", encoding='utf-8') as f:
             f.write(text)
         
-        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        # 清理临时文件
+        # 如果使用了上传文件，清理上传的临时文件
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        # 如果wav_path是临时转换文件（使用audio_path时可能产生），也需要清理
+        elif wav_path and TMP_DIR in wav_path and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         temp_input = None
         wav_path = None
         
@@ -64,12 +89,20 @@ async def clone_voice(
             "message": f"音色 '{safe_name}' 克隆成功"
         }
     except HTTPException:
-        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        # HTTPException 需要重新抛出，但也要清理临时文件
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        elif wav_path and TMP_DIR in wav_path and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         raise
     except Exception as e:
         print(f"Clone Voice Error: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
-        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        # 确保清理临时文件
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        elif wav_path and TMP_DIR in wav_path and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -99,7 +132,8 @@ async def tts_with_cloned_voice(
     try:
         model = load_model_cached("clone", use_lite)
 
-        temp_dir = f"temp_{int(time.time())}"
+        temp_dir = get_temp_path("temp_clone")
+        os.makedirs(temp_dir, exist_ok=True)
         generate_audio(
             model=model,
             text=text,
@@ -109,12 +143,10 @@ async def tts_with_cloned_voice(
         )
 
         if preview:
-            temp_audio_dir = os.path.join(BASE_DIR, "temp_audio")
-            os.makedirs(temp_audio_dir, exist_ok=True)
-
+            # 预览音频保存在 tmp 目录下
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             audio_filename = f"preview_clone_{timestamp}.wav"
-            audio_path = os.path.join(temp_audio_dir, audio_filename)
+            audio_path = os.path.join(TMP_DIR, audio_filename)
 
             source_file = os.path.join(temp_dir, "audio_000.wav")
             if os.path.exists(source_file):

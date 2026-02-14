@@ -11,9 +11,9 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Form
 from pydantic import BaseModel
 from mlx_audio.tts.generate import generate_audio
-from config import BASE_DIR, MODELS
+from config import BASE_DIR, MODELS, TMP_DIR
 from models import load_model_cached
-from utils import cleanup_temp_files, save_audio_file
+from utils import cleanup_temp_files, save_audio_file, get_temp_path
 from history import save_history_item
 
 router = APIRouter()
@@ -38,7 +38,8 @@ async def text_to_speech(request: TTSRequest):
         model = load_model_cached("custom", request.use_lite)
         model_info = MODELS["custom"]["lite" if request.use_lite else "pro"]
         
-        temp_dir = f"temp_{int(time.time())}"
+        temp_dir = get_temp_path("temp_tts")
+        os.makedirs(temp_dir, exist_ok=True)
         generate_audio(
             model=model,
             text=request.text,
@@ -87,7 +88,8 @@ async def preview_voice(request: TTSRequest):
     try:
         model = load_model_cached("custom", request.use_lite)
         
-        temp_dir = f"temp_{int(time.time())}"
+        temp_dir = get_temp_path("temp_tts_preview")
+        os.makedirs(temp_dir, exist_ok=True)
         generate_audio(
             model=model,
             text=request.text,
@@ -97,12 +99,10 @@ async def preview_voice(request: TTSRequest):
             output_path=temp_dir
         )
         
-        temp_audio_dir = os.path.join(BASE_DIR, "temp_audio")
-        os.makedirs(temp_audio_dir, exist_ok=True)
-        
+        # 预览音频保存在 tmp 目录下
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         audio_filename = f"preview_{timestamp}.wav"
-        audio_path = os.path.join(temp_audio_dir, audio_filename)
+        audio_path = os.path.join(TMP_DIR, audio_filename)
         
         source_file = os.path.join(temp_dir, "audio_000.wav")
         if os.path.exists(source_file):
@@ -138,7 +138,8 @@ async def design_voice(text: str = Form(...), description: str = Form(...), use_
         model = load_model_cached("design", use_lite)
         model_info = MODELS["design"]["lite" if use_lite else "pro"]
         
-        temp_dir = f"temp_{int(time.time())}"
+        temp_dir = get_temp_path("temp_design")
+        os.makedirs(temp_dir, exist_ok=True)
         generate_audio(
             model=model,
             text=text,

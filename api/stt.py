@@ -11,7 +11,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from mlx_audio.stt.generate import generate_transcription
 from models import load_asr_model_cached
-from utils import cleanup_temp_files, cleanup_stt_temp_files, convert_audio_if_needed, save_stt_results
+from utils import cleanup_temp_files, cleanup_stt_temp_files, convert_audio_if_needed, save_stt_results, get_temp_path
+from config import TMP_DIR
 from history import save_history_item
 
 router = APIRouter()
@@ -31,7 +32,9 @@ async def speech_to_text(
     temp_output_dir = None
     
     try:
-        temp_input = f"temp_stt_{int(time.time())}_{audio.filename}"
+        # 保存上传的音频到 tmp 目录
+        safe_filename = re.sub(r'[^\w\s.-]', '', audio.filename).strip()
+        temp_input = get_temp_path("temp_stt", safe_filename)
         with open(temp_input, "wb") as f:
             content = await audio.read()
             f.write(content)
@@ -49,7 +52,7 @@ async def speech_to_text(
         model = load_asr_model_cached(model_key)
         
         print(f"[STT] 开始转录: {wav_path}")
-        temp_output_dir = f"temp_stt_output_{int(time.time())}"
+        temp_output_dir = get_temp_path("temp_stt_output")
         os.makedirs(temp_output_dir, exist_ok=True)
         
         try:
