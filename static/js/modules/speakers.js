@@ -2,17 +2,17 @@
  * 音色库页面功能
  */
 
-let speakers = [];
+let speakersList = [];
 
 async function loadSpeakersPage() {
     try {
         const response = await fetch('/api/speakers');
         const data = await response.json();
-        speakers = data.speakers;
+        speakersList = data.speakers;
         
         const presetContainer = document.getElementById('preset-speakers');
         if (presetContainer) {
-            const presetSpeakers = speakers.filter(s => s.type === 'preset');
+            const presetSpeakers = speakersList.filter(s => s.type === 'preset');
             presetContainer.innerHTML = presetSpeakers.map(speaker => `
                 <div class="speaker-card">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -35,7 +35,7 @@ async function loadSpeakersPage() {
         const clonedContainer = document.getElementById('cloned-speakers');
         const noClonedMsg = document.getElementById('no-cloned');
         if (clonedContainer) {
-            const clonedSpeakers = speakers.filter(s => s.type === 'cloned');
+            const clonedSpeakers = speakersList.filter(s => s.type === 'cloned');
             
             if (clonedSpeakers.length === 0) {
                 clonedContainer.innerHTML = '';

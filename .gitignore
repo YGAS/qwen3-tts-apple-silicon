@@ -7,6 +7,7 @@ models/
 # Temp files
 temp_*/
 temp_convert_*.wav
+tmp/
 
 # User data (keep folder structure)
 voices/*

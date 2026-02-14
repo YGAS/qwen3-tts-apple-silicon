@@ -47,6 +47,7 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 VOICES_DIR = os.path.join(BASE_DIR, "voices")
 HISTORY_FILE = os.path.join(BASE_DIR, "history.json")
 STT_OUTPUT_DIR = os.path.join(BASE_OUTPUT_DIR, "STT")
+TMP_DIR = os.path.join(BASE_DIR, "tmp")
 
 # Settings
 SAMPLE_RATE = 24000
@@ -165,6 +166,7 @@ async def lifespan(app: FastAPI):
     print("[启动] 应用启动中...")
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
     os.makedirs(VOICES_DIR, exist_ok=True)
+    os.makedirs(TMP_DIR, exist_ok=True)
     
     # 预加载常用模型（在线程池中执行，避免阻塞事件循环）
     def preload_model_sync(mode: str, use_lite: bool, name: str):
@@ -454,8 +456,8 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def save_stt_results(text: str, segments: List[dict], audio_filename: str) -> dict:
-    """保存 STT 结果，生成 TXT 和 SRT 文件"""
+def save_stt_results(text: str, segments: List[dict], audio_filename: str, audio_path: Optional[str] = None) -> dict:
+    """保存 STT 结果，生成 TXT、SRT 文件，并保存原始音频文件"""
     os.makedirs(STT_OUTPUT_DIR, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -486,11 +488,25 @@ def save_stt_results(text: str, segments: List[dict], audio_filename: str) -> di
                 f.write(f"[置信度: {confidence:.2%}]\n")
             f.write("\n")
     
+    # 保存原始音频文件（如果提供了音频路径）
+    audio_output_path = None
+    if audio_path and os.path.exists(audio_path):
+        # 获取原始音频文件的扩展名
+        audio_ext = os.path.splitext(audio_path)[1] or ".wav"
+        audio_filename_output = f"{timestamp}_{base_name}{audio_ext}"
+        audio_output_path = os.path.join(STT_OUTPUT_DIR, audio_filename_output)
+        # 复制音频文件到输出目录
+        shutil.copy2(audio_path, audio_output_path)
+    
     # 返回相对路径
-    return {
+    result = {
         "txt_path": os.path.relpath(txt_path, BASE_DIR),
         "srt_path": os.path.relpath(srt_path, BASE_DIR)
     }
+    if audio_output_path:
+        result["audio_path"] = os.path.relpath(audio_output_path, BASE_DIR)
+    
+    return result
 
 
 def get_history() -> List[dict]:
@@ -781,7 +797,8 @@ async def clone_voice(
     name: str = Form(...),
     text: str = Form(...),
     language: str = Form("English"),
-    audio: UploadFile = File(...)
+    audio: Optional[UploadFile] = File(None),
+    audio_path: Optional[str] = Form(None)
 ):
     """克隆声音"""
     if not name.strip() or not text.strip():
@@ -793,17 +810,31 @@ async def clone_voice(
     wav_path = None
     
     try:
-        # 保存上传的音频
-        temp_input = f"temp_upload_{int(time.time())}_{audio.filename}"
-        with open(temp_input, "wb") as f:
-            f.write(await audio.read())
-        
-        # 转换为 WAV
-        wav_path = convert_audio_if_needed(temp_input)
-        if not wav_path:
-            cleanup_temp_files(temp_input)
-            temp_input = None
-            raise HTTPException(status_code=400, detail="音频转换失败")
+        # 优先使用 audio_path，如果没有则使用上传的文件
+        if audio_path:
+            # 使用提供的文件路径
+            full_audio_path = os.path.join(BASE_DIR, audio_path) if not os.path.isabs(audio_path) else audio_path
+            if not os.path.exists(full_audio_path):
+                raise HTTPException(status_code=404, detail=f"音频文件未找到: {audio_path}")
+            
+            # 转换为 WAV
+            wav_path = convert_audio_if_needed(full_audio_path)
+            if not wav_path:
+                raise HTTPException(status_code=400, detail="音频转换失败")
+        elif audio:
+            # 保存上传的音频
+            temp_input = f"temp_upload_{int(time.time())}_{audio.filename}"
+            with open(temp_input, "wb") as f:
+                f.write(await audio.read())
+            
+            # 转换为 WAV
+            wav_path = convert_audio_if_needed(temp_input)
+            if not wav_path:
+                cleanup_temp_files(temp_input)
+                temp_input = None
+                raise HTTPException(status_code=400, detail="音频转换失败")
+        else:
+            raise HTTPException(status_code=400, detail="请提供音频文件或音频文件路径")
         
         # 保存到 voices 目录
         os.makedirs(VOICES_DIR, exist_ok=True)
@@ -815,7 +846,12 @@ async def clone_voice(
             f.write(text)
         
         # 清理临时文件
-        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        # 如果使用了上传文件，清理上传的临时文件
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        # 如果wav_path是临时转换文件（使用audio_path时可能产生），也需要清理
+        elif wav_path and wav_path.startswith(os.getcwd()) and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         temp_input = None
         wav_path = None
         
@@ -826,14 +862,20 @@ async def clone_voice(
         }
     except HTTPException:
         # HTTPException 需要重新抛出，但也要清理临时文件
-        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        elif wav_path and wav_path.startswith(os.getcwd()) and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         raise
     except Exception as e:
         import traceback
         print(f"Clone Voice Error: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
         # 确保清理临时文件
-        cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        if temp_input:
+            cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
+        elif wav_path and wav_path.startswith(os.getcwd()) and 'temp_convert_' in wav_path:
+            cleanup_temp_files(wav_path)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -975,7 +1017,7 @@ async def speech_to_text(
     
     temp_input = None
     wav_path = None
-    temp_output_dir = None
+    temp_output_file = None
     
     try:
         # 保存上传的音频到临时文件
@@ -1001,89 +1043,113 @@ async def speech_to_text(
         
         # 执行转录
         print(f"[STT] 开始转录: {wav_path}")
-        # 使用临时输出文件，然后读取结果
-        temp_output_dir = f"temp_stt_output_{int(time.time())}"
-        os.makedirs(temp_output_dir, exist_ok=True)
+        # 确保输出目录和临时目录存在
+        os.makedirs(STT_OUTPUT_DIR, exist_ok=True)
+        os.makedirs(TMP_DIR, exist_ok=True)
         
-        try:
-            # generate_transcription 使用 audio 参数（不是 audio_path）
-            # 返回的是 transcription 对象，有 .text 属性
-            transcription = generate_transcription(
-                model=model,
-                audio=wav_path,  # 使用 audio 参数（音频文件路径）
-                output_path=temp_output_dir,
-                format="txt",  # 先保存为 txt
-                verbose=True
-            )
-            
-            # 从 transcription 对象获取文本
-            text = ""
-            language = "unknown"
-            processed_segments = []
-            
-            # 获取完整文本
-            if hasattr(transcription, 'text'):
-                text = transcription.text
-            elif isinstance(transcription, str):
-                text = transcription
-            else:
-                # 尝试从输出文件读取
-                output_file = os.path.join(temp_output_dir, "transcript.txt")
-                if not os.path.exists(output_file):
-                    output_file = os.path.join(temp_output_dir, "transcription.txt")
+        # generate_transcription 使用 audio 参数（不是 audio_path）
+        # 返回的是 transcription 对象，有 .text 属性
+        # 使用临时文件路径作为 output_path，放在 tmp 目录下
+        # generate_transcription 可能会自动添加扩展名，所以不包含 .txt
+        temp_output_base = os.path.join(TMP_DIR, f"temp_stt_transcript_{int(time.time())}")
+        temp_output_file = temp_output_base  # 不包含扩展名，让 generate_transcription 自己添加
+        
+        transcription = generate_transcription(
+            model=model,
+            audio=wav_path,  # 使用 audio 参数（音频文件路径）
+            output_path=temp_output_file,  # 使用临时文件路径
+            format="txt",
+            verbose=True
+        )
+        
+        # 从 transcription 对象获取文本
+        text = ""
+        language = "unknown"
+        processed_segments = []
+        
+        # 获取完整文本
+        if hasattr(transcription, 'text'):
+            text = transcription.text
+        elif isinstance(transcription, str):
+            text = transcription
+        else:
+            # 尝试从输出文件读取（generate_transcription 可能创建了文件）
+            # 检查可能的文件名（可能添加了 .txt 扩展名）
+            possible_files = [
+                temp_output_file,
+                f"{temp_output_file}.txt",
+                os.path.join(TMP_DIR, os.path.basename(temp_output_file) + ".txt")
+            ]
+            for output_file in possible_files:
                 if os.path.exists(output_file):
                     with open(output_file, 'r', encoding='utf-8') as f:
                         text = f.read().strip()
-            
-            # 获取分段信息
-            if hasattr(transcription, 'segments'):
-                segments = transcription.segments
-            elif hasattr(transcription, 'chunks'):
-                segments = transcription.chunks
-            else:
-                segments = []
-            
-            # 处理 segments
-            if segments:
-                for i, seg in enumerate(segments):
-                    # 处理不同格式的 segment
-                    if isinstance(seg, dict):
-                        seg_text = seg.get("text", seg.get("words", ""))
-                        seg_start = seg.get("start", seg.get("start_time", 0.0))
-                        seg_end = seg.get("end", seg.get("end_time", 0.0))
-                        seg_conf = seg.get("confidence", seg.get("score", 0.0))
-                    elif hasattr(seg, '__dict__'):
-                        seg_text = getattr(seg, 'text', getattr(seg, 'words', ''))
-                        seg_start = getattr(seg, 'start', getattr(seg, 'start_time', 0.0))
-                        seg_end = getattr(seg, 'end', getattr(seg, 'end_time', 0.0))
-                        seg_conf = getattr(seg, 'confidence', getattr(seg, 'score', 0.0))
-                    else:
-                        seg_text = str(seg)
-                        seg_start = 0.0
-                        seg_end = 0.0
-                        seg_conf = 0.0
-                    
-                    processed_segments.append({
-                        "id": i,
-                        "start": float(seg_start),
-                        "end": float(seg_end),
-                        "text": seg_text,
-                        "confidence": float(seg_conf)
-                    })
+                    temp_output_file = output_file  # 更新为实际创建的文件路径
+                    break
+        
+        # 清理临时文件（清理所有可能的临时文件）
+        # 收集所有可能的临时文件路径
+        temp_files_to_clean = set()
+        temp_files_to_clean.add(temp_output_file)
+        temp_files_to_clean.add(f"{temp_output_base}.txt")
+        # 如果 temp_output_file 被更新为实际文件路径，也要清理原始路径
+        if temp_output_file != temp_output_base:
+            temp_files_to_clean.add(temp_output_base)
+            temp_files_to_clean.add(f"{temp_output_file}.txt")
+        
+        for output_file in temp_files_to_clean:
+            if output_file and os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                    print(f"[清理临时文件] 已删除: {output_file}")
+                except Exception as e:
+                    print(f"[清理临时文件] 警告: 无法删除 {output_file}: {e}")
+        
+        # 获取分段信息
+        if hasattr(transcription, 'segments'):
+            segments = transcription.segments
+        elif hasattr(transcription, 'chunks'):
+            segments = transcription.chunks
+        else:
+            segments = []
+        
+        # 处理 segments
+        if segments:
+            for i, seg in enumerate(segments):
+                # 处理不同格式的 segment
+                if isinstance(seg, dict):
+                    seg_text = seg.get("text", seg.get("words", ""))
+                    seg_start = seg.get("start", seg.get("start_time", 0.0))
+                    seg_end = seg.get("end", seg.get("end_time", 0.0))
+                    seg_conf = seg.get("confidence", seg.get("score", 0.0))
+                elif hasattr(seg, '__dict__'):
+                    seg_text = getattr(seg, 'text', getattr(seg, 'words', ''))
+                    seg_start = getattr(seg, 'start', getattr(seg, 'start_time', 0.0))
+                    seg_end = getattr(seg, 'end', getattr(seg, 'end_time', 0.0))
+                    seg_conf = getattr(seg, 'confidence', getattr(seg, 'score', 0.0))
+                else:
+                    seg_text = str(seg)
+                    seg_start = 0.0
+                    seg_end = 0.0
+                    seg_conf = 0.0
                 
-                # 尝试从第一个 segment 获取语言信息
-                if processed_segments and isinstance(segments[0], dict):
-                    language = segments[0].get("language", "unknown")
-                elif processed_segments and hasattr(segments[0], 'language'):
-                    language = getattr(segments[0], 'language', 'unknown')
+                processed_segments.append({
+                    "id": i,
+                    "start": float(seg_start),
+                    "end": float(seg_end),
+                    "text": seg_text,
+                    "confidence": float(seg_conf)
+                })
             
-            # 尝试从 transcription 对象获取语言
-            if language == "unknown" and hasattr(transcription, 'language'):
-                language = transcription.language
-        finally:
-            # 清理临时输出目录和可能直接创建的文件
-            cleanup_stt_temp_files(temp_output_dir)
-            temp_output_dir = None
+            # 尝试从第一个 segment 获取语言信息
+            if processed_segments and isinstance(segments[0], dict):
+                language = segments[0].get("language", "unknown")
+            elif processed_segments and hasattr(segments[0], 'language'):
+                language = getattr(segments[0], 'language', 'unknown')
+        
+        # 尝试从 transcription 对象获取语言
+        if language == "unknown" and hasattr(transcription, 'language'):
+            language = transcription.language
         
         # 如果没有分段信息，尝试从文本创建基本分段
         if not processed_segments and text:
@@ -1103,8 +1169,8 @@ async def speech_to_text(
                     })
                     current_time += duration
         
-        # 保存结果文件
-        file_paths = save_stt_results(text, processed_segments, audio.filename)
+        # 保存结果文件（包括原始音频文件）
+        file_paths = save_stt_results(text, processed_segments, audio.filename, wav_path)
         
         # 保存历史记录
         history_item = {
@@ -1118,16 +1184,21 @@ async def speech_to_text(
             "srt_path": file_paths["srt_path"],
             "created_at": datetime.now().isoformat()
         }
+        # 如果保存了音频文件，添加到历史记录中
+        if "audio_path" in file_paths:
+            history_item["audio_path"] = file_paths["audio_path"]
         save_history_item(history_item)
         
-        # 清理临时文件
-        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None)
+        # 清理临时文件（音频文件已保存到输出目录，可以清理临时文件）
+        cleanup_temp_files(temp_input, wav_path if wav_path != temp_input else None, temp_output_file)
         temp_input = None
         wav_path = None
+        temp_output_file = None
         
         gc.collect()
         
-        return {
+        # 构建返回结果
+        result = {
             "success": True,
             "text": text,
             "language": language,
@@ -1136,10 +1207,23 @@ async def speech_to_text(
             "srt_path": file_paths["srt_path"],
             "history_id": history_item["id"]
         }
+        # 如果保存了音频文件，添加到返回结果中
+        if "audio_path" in file_paths:
+            result["audio_path"] = file_paths["audio_path"]
+        
+        return result
     except HTTPException:
         # HTTPException 需要重新抛出，但也要清理临时文件
         cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
-        cleanup_stt_temp_files(temp_output_dir)
+        # 清理临时输出文件（可能存在的所有变体）
+        if temp_output_file:
+            temp_output_base = temp_output_file.replace('.txt', '')
+            for output_file in [temp_output_file, f"{temp_output_base}.txt", f"{temp_output_file}.txt"]:
+                if os.path.exists(output_file):
+                    try:
+                        os.remove(output_file)
+                    except Exception:
+                        pass
         raise
     except Exception as e:
         import traceback
@@ -1147,7 +1231,15 @@ async def speech_to_text(
         print(f"Traceback: {traceback.format_exc()}")
         # 确保清理所有临时文件
         cleanup_temp_files(temp_input, wav_path if wav_path and wav_path != temp_input else None)
-        cleanup_stt_temp_files(temp_output_dir)
+        # 清理临时输出文件（可能存在的所有变体）
+        if temp_output_file:
+            temp_output_base = temp_output_file.replace('.txt', '')
+            for output_file in [temp_output_file, f"{temp_output_base}.txt", f"{temp_output_file}.txt"]:
+                if os.path.exists(output_file):
+                    try:
+                        os.remove(output_file)
+                    except Exception:
+                        pass
         raise HTTPException(status_code=500, detail=f"语音转文字失败: {str(e)}")
 
 
@@ -2023,4 +2115,5 @@ if __name__ == "__main__":
     import uvicorn
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
     os.makedirs(VOICES_DIR, exist_ok=True)
+    os.makedirs(TMP_DIR, exist_ok=True)
     uvicorn.run(app, host="0.0.0.0", port=8766)

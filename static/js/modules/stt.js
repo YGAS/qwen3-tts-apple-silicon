@@ -165,15 +165,25 @@ function retrySTT() {
 }
 
 function sendToClone() {
-    if (!lastSTTResult || !sttAudioFile) {
+    if (!lastSTTResult) {
         alert('没有可用的识别结果');
         return;
     }
     
-    const cloneUrl = `/clone?text=${encodeURIComponent(lastSTTResult.text)}`;
-    window.location.href = cloneUrl;
+    // 构建 URL 参数，传递文本文件路径和音频文件路径
+    const params = new URLSearchParams();
+    if (lastSTTResult.txt_path) {
+        params.append('txt_path', lastSTTResult.txt_path);
+    }
+    if (lastSTTResult.audio_path) {
+        params.append('audio_path', lastSTTResult.audio_path);
+    }
+    // 也传递文本内容作为备用（如果文件路径不可用）
+    if (lastSTTResult.text) {
+        params.append('text', lastSTTResult.text);
+    }
     
-    sessionStorage.setItem('stt_text', lastSTTResult.text);
-    sessionStorage.setItem('stt_audio_name', sttAudioFile.name);
+    const cloneUrl = `/clone?${params.toString()}`;
+    window.location.href = cloneUrl;
 }
 
