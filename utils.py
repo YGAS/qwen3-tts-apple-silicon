@@ -47,6 +47,113 @@ def get_temp_path(prefix: str = "temp", suffix: str = "") -> str:
     return os.path.join(TMP_DIR, f"{prefix}_{timestamp}")
 
 
+def detect_language_from_text(text: str) -> str:
+    """从文本内容检测语言
+    
+    Args:
+        text: 要检测的文本
+    
+    Returns:
+        语言代码: 'zh' (中文), 'ja' (日语), 'ko' (韩语), 'en' (英语)
+    """
+    if not text:
+        return 'en'
+    
+    # 检测中文字符
+    if any('\u4e00' <= c <= '\u9fff' for c in text):
+        return 'zh'
+    # 检测日文字符
+    elif any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' for c in text):
+        return 'ja'
+    # 检测韩文字符
+    elif any('\uac00' <= c <= '\ud7af' for c in text):
+        return 'ko'
+    # 默认为英语
+    else:
+        return 'en'
+
+
+def language_name_to_code(language_name: str) -> str:
+    """将语言名称转换为语言代码
+    
+    Args:
+        language_name: 语言名称 (如 "Chinese", "English", "Japanese", "Korean")
+    
+    Returns:
+        语言代码: 'zh', 'en', 'ja', 'ko'
+    """
+    language_map = {
+        "Chinese": "zh",
+        "English": "en",
+        "Japanese": "ja",
+        "Korean": "ko"
+    }
+    return language_map.get(language_name, "en")
+
+
+def get_speaker_language_code(speaker_name: str, text: str = "") -> str:
+    """根据音色名称和文本智能检测语言代码
+    
+    优先级：
+    1. 如果音色只支持一种语言，使用该语言
+    2. 如果音色支持多种语言，根据文本内容检测
+    3. 如果无法获取音色信息，根据文本检测
+    
+    Args:
+        speaker_name: 音色名称
+        text: 要生成的文本（可选，用于多语言音色的语言检测）
+    
+    Returns:
+        语言代码: 'zh', 'en', 'ja', 'ko'
+    """
+    from history import get_all_speakers
+    
+    # 获取所有音色信息
+    speakers = get_all_speakers()
+    
+    # 查找匹配的音色
+    speaker = None
+    for s in speakers:
+        if s["name"] == speaker_name:
+            speaker = s
+            break
+    
+    if speaker and speaker.get("languages"):
+        languages = speaker["languages"]
+        
+        # 如果音色只支持一种语言，直接使用
+        if len(languages) == 1:
+            return language_name_to_code(languages[0])
+        
+        # 如果音色支持多种语言，根据文本检测
+        if len(languages) > 1 and text:
+            text_lang_code = detect_language_from_text(text)
+            # 检查检测到的语言是否在音色支持的语言列表中
+            text_lang_name = {
+                "zh": "Chinese",
+                "ja": "Japanese",
+                "ko": "Korean",
+                "en": "English"
+            }.get(text_lang_code, "English")
+            
+            if text_lang_name in languages:
+                return text_lang_code
+            # 如果文本语言不在音色支持列表中，使用第一个支持的语言
+            else:
+                return language_name_to_code(languages[0])
+        
+        # 如果音色支持多种语言但没有文本，使用第一个支持的语言
+        if len(languages) > 1:
+            return language_name_to_code(languages[0])
+    
+    # 如果无法获取音色信息，根据文本检测（如果有文本）
+    if text:
+        return detect_language_from_text(text)
+    
+    # 默认返回英语
+    return "en"
+
+
 def cleanup_temp_files(*paths):
     """清理临时文件或目录"""
     for path in paths:

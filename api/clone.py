@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from mlx_audio.tts.generate import generate_audio
 from config import BASE_DIR, VOICES_DIR, MODELS, TMP_DIR
 from models import load_model_cached
-from utils import cleanup_temp_files, convert_audio_if_needed, save_audio_file, get_temp_path
+from utils import cleanup_temp_files, convert_audio_if_needed, save_audio_file, get_temp_path, get_speaker_language_code, detect_language_from_text
 from history import save_history_item
 
 router = APIRouter()
@@ -128,17 +128,25 @@ async def tts_with_cloned_voice(
         with open(ref_txt, 'r', encoding='utf-8') as f:
             ref_text = f.read().strip()
 
+    # 优先使用音色的语言属性，如果音色支持多语言，则根据文本检测
+    # 对于克隆音色，使用音色名称和当前文本进行语言检测
+    lang_code = get_speaker_language_code(voice_name, text)
+
     temp_dir = None
     try:
         model = load_model_cached("clone", use_lite)
 
         temp_dir = get_temp_path("temp_clone")
         os.makedirs(temp_dir, exist_ok=True)
+        # 使用克隆音色名称作为 voice 参数（用于日志显示）
+        # 虽然 ref_audio 和 ref_text 是主要参数，但 voice 参数会影响日志输出
         generate_audio(
             model=model,
             text=text,
+            voice=voice_name,  # 使用克隆音色名称，而不是默认的 'af_heart'
             ref_audio=ref_audio,
             ref_text=ref_text,
+            lang_code=lang_code,
             output_path=temp_dir
         )
 

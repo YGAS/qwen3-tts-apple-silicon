@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from mlx_audio.tts.generate import generate_audio
 from config import BASE_DIR, MODELS, TMP_DIR
 from models import load_model_cached
-from utils import cleanup_temp_files, save_audio_file, get_temp_path
+from utils import cleanup_temp_files, save_audio_file, get_temp_path, get_speaker_language_code
 from history import save_history_item
 
 router = APIRouter()
@@ -40,12 +40,15 @@ async def text_to_speech(request: TTSRequest):
         
         temp_dir = get_temp_path("temp_tts")
         os.makedirs(temp_dir, exist_ok=True)
+        # 根据音色和文本智能检测语言
+        lang_code = get_speaker_language_code(request.speaker, request.text)
         generate_audio(
             model=model,
             text=request.text,
             voice=request.speaker,
             instruct=request.emotion,
             speed=request.speed,
+            lang_code=lang_code,
             output_path=temp_dir
         )
         
@@ -90,12 +93,15 @@ async def preview_voice(request: TTSRequest):
         
         temp_dir = get_temp_path("temp_tts_preview")
         os.makedirs(temp_dir, exist_ok=True)
+        # 根据音色和文本智能检测语言
+        lang_code = get_speaker_language_code(request.speaker, request.text)
         generate_audio(
             model=model,
             text=request.text,
             voice=request.speaker,
             instruct=request.emotion,
             speed=request.speed,
+            lang_code=lang_code,
             output_path=temp_dir
         )
         
@@ -140,10 +146,13 @@ async def design_voice(text: str = Form(...), description: str = Form(...), use_
         
         temp_dir = get_temp_path("temp_design")
         os.makedirs(temp_dir, exist_ok=True)
+        # 从文本检测语言
+        lang_code = detect_language_from_text(text)
         generate_audio(
             model=model,
             text=text,
             instruct=description,
+            lang_code=lang_code,
             output_path=temp_dir
         )
         
