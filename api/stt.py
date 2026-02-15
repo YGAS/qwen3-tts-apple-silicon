@@ -21,7 +21,8 @@ router = APIRouter()
 @router.post("/stt")
 async def speech_to_text(
     audio: UploadFile = File(...),
-    model_key: str = Form(None)
+    model_key: str = Form(None),
+    language: str = Form("Chinese")
 ):
     """语音转文字"""
     if not audio.filename:
@@ -56,12 +57,21 @@ async def speech_to_text(
         os.makedirs(temp_output_dir, exist_ok=True)
         
         try:
+            # 确保语言参数有效，Qwen3-ASR 支持: Chinese, English, Japanese, Korean
+            # 如果用户未指定或指定为 auto，则尝试自动检测
+            if not language or language.lower() in ["auto", "", "null"]:
+                # 默认使用中文，因为 Qwen3-ASR 不支持 None
+                language = "Chinese"
+            
+            print(f"[STT] 使用语言: {language}")
+            
             transcription = generate_transcription(
                 model=model,
                 audio=wav_path,
                 output_path=temp_output_dir,
                 format="txt",
-                verbose=True
+                verbose=True,
+                language=language
             )
             
             text = ""

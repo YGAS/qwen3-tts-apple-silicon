@@ -56,4 +56,9 @@ def register_routes(app):
     async def history_page():
         """生成历史页面"""
         return render_page(get_history_page, 'history')
+    
+    @app.get("/@vite/client")
+    async def vite_client():
+        """处理 Vite 客户端请求（浏览器插件或缓存导致）"""
+        return {"message": "Not a Vite project"}
 

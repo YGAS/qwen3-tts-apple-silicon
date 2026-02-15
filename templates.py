@@ -190,8 +190,8 @@ def get_clone_page():
     <div class="card">
         <label class="form-label">语言类型</label>
         <select id="clone-language" class="form-select">
+            <option value="Chinese" selected>中文</option>
             <option value="English">英语</option>
-            <option value="Chinese">中文</option>
             <option value="Japanese">日语</option>
             <option value="Korean">韩语</option>
         </select>
@@ -223,6 +223,17 @@ def get_stt_page():
             <input type="file" id="stt-audio" accept="audio/*" style="display: none;">
         </div>
         <p id="stt-file-name" class="hidden" style="margin-top: 12px; color: #22c55e; font-size: 14px;"></p>
+    </div>
+
+    <div class="card">
+        <label class="form-label">识别语言</label>
+        <select id="stt-language-select" class="form-select">
+            <option value="Chinese" selected>中文</option>
+            <option value="English">英语</option>
+            <option value="Japanese">日语</option>
+            <option value="Korean">韩语</option>
+        </select>
+        <p style="font-size: 13px; color: #9ca3af; margin-top: 8px;">请选择音频中的主要语言，默认中文</p>
     </div>
 
     <div style="display: flex; gap: 12px; margin-bottom: 20px;">

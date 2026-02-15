@@ -81,6 +81,12 @@ async function generateSTT() {
         const formData = new FormData();
         formData.append('audio', sttAudioFile);
         
+        // 获取用户选择的语言
+        const languageSelect = document.getElementById('stt-language-select');
+        if (languageSelect) {
+            formData.append('language', languageSelect.value);
+        }
+        
         const response = await fetch('/api/stt', {
             method: 'POST',
             body: formData
