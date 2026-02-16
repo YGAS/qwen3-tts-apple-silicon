@@ -37,6 +37,11 @@ ASR_MODELS = {
     "qwen3_asr_0.6b": {
         "folder": "Qwen3-ASR-0.6B-8bit",
         "type": "qwen3_asr",
+        "default": False
+    },
+    "qwen3_asr_1.7b": {
+        "folder": "Qwen3-ASR-1.7B-8bit",
+        "type": "qwen3_asr",
         "default": True
     },
 }
