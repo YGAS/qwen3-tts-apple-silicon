@@ -41,6 +41,15 @@ ASR_MODELS = {
     },
 }
 
+# ForcedAligner 模型定义
+FORCED_ALIGNER_MODELS = {
+    "qwen3_forced_aligner_0.6b": {
+        "folder": "Qwen3-ForcedAligner-0.6B-8bit",
+        "type": "qwen3_forced_aligner",
+        "default": True
+    },
+}
+
 # 音色映射表
 SPEAKER_MAP = {
     "English": ["Ryan", "Aiden", "Ethan", "Chelsie", "Serena", "Vivian"],

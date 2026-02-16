@@ -5,14 +5,16 @@ import threading
 from fastapi import HTTPException
 from mlx_audio.tts.utils import load_model
 from mlx_audio.stt.utils import load_model as load_stt_model
-from config import MODELS, ASR_MODELS
+from config import MODELS, ASR_MODELS, FORCED_ALIGNER_MODELS
 from utils import get_smart_path
 
 # 缓存的模型
 _cached_models = {}
 _cached_asr_models = {}
+_cached_forced_aligner_models = {}
 _model_loading_lock = {}
 _asr_model_loading_lock = {}
+_forced_aligner_model_loading_lock = {}
 
 
 def load_model_cached(mode: str, use_lite: bool = False):
@@ -88,6 +90,50 @@ def load_asr_model_cached(model_key: str = None):
             raise HTTPException(status_code=500, detail=f"ASR 模型加载失败: {str(e)}")
 
 
+def load_forced_aligner_model_cached(model_key: str = None):
+    """加载并缓存 ForcedAligner 模型"""
+    if model_key is None:
+        for key, config in FORCED_ALIGNER_MODELS.items():
+            if config.get("default", False):
+                model_key = key
+                break
+        if model_key is None:
+            model_key = list(FORCED_ALIGNER_MODELS.keys())[0]
+
+    if model_key not in FORCED_ALIGNER_MODELS:
+        raise HTTPException(status_code=500, detail=f"ForcedAligner 模型配置错误: {model_key}")
+
+    if model_key in _cached_forced_aligner_models:
+        return _cached_forced_aligner_models[model_key]
+
+    if model_key not in _forced_aligner_model_loading_lock:
+        _forced_aligner_model_loading_lock[model_key] = threading.Lock()
+
+    with _forced_aligner_model_loading_lock[model_key]:
+        if model_key in _cached_forced_aligner_models:
+            return _cached_forced_aligner_models[model_key]
+
+        model_info = FORCED_ALIGNER_MODELS[model_key]
+        folder = model_info.get("folder")
+        if not folder:
+            raise HTTPException(status_code=404, detail=f"ForcedAligner 模型配置错误: 未找到本地文件夹配置")
+
+        model_path = get_smart_path(folder)
+        if not model_path:
+            raise HTTPException(status_code=404, detail=f"ForcedAligner 模型未找到: {folder}，请确认模型已下载到 models/ 目录")
+
+        print(f"[ForcedAligner模型加载] 从本地加载模型: {model_key} ({model_path})")
+        try:
+            _cached_forced_aligner_models[model_key] = load_stt_model(model_path)
+            print(f"[ForcedAligner模型加载] 本地模型加载完成: {model_key}")
+            return _cached_forced_aligner_models[model_key]
+        except Exception as e:
+            import traceback
+            print(f"[ForcedAligner模型加载] 本地加载失败: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=f"ForcedAligner 模型加载失败: {str(e)}")
+
+
 def get_models_status():
     """获取模型加载状态"""
     status = {}
@@ -99,7 +145,7 @@ def get_models_status():
             "loaded": True,
             "status": "已加载"
         }
-    
+
     all_models = {}
     for mode in MODELS.keys():
         for model_type in ["lite", "pro"]:
@@ -112,7 +158,7 @@ def get_models_status():
                         "loaded": False,
                         "status": "未加载"
                     }
-    
+
     return {
         "loaded_models": status,
         "available_models": all_models,
