@@ -8,6 +8,7 @@ const scripts = [
     '/static/js/modules/utils.js',
     '/static/js/modules/tts.js',
     '/static/js/modules/stt.js',
+    '/static/js/modules/ocr.js',
     '/static/js/modules/speakers.js',
     '/static/js/modules/clone.js',
     '/static/js/modules/history.js'
@@ -46,6 +47,8 @@ loadScripts(scripts, () => {
             setupTTSListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
+        } else if (path === '/ocr') {
+            setupOCRListeners();
         } else if (path === '/speakers') {
             loadSpeakersPage();
         } else if (path === '/clone') {
@@ -54,7 +57,7 @@ loadScripts(scripts, () => {
             loadHistoryPage();
         }
     });
-    
+
     // 如果 DOM 已经加载完成，直接执行
     if (document.readyState === 'loading') {
         // DOM 还在加载，等待 DOMContentLoaded
@@ -66,6 +69,8 @@ loadScripts(scripts, () => {
             setupTTSListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
+        } else if (path === '/ocr') {
+            setupOCRListeners();
         } else if (path === '/speakers') {
             loadSpeakersPage();
         } else if (path === '/clone') {

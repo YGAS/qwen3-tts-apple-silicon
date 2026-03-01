@@ -8,7 +8,8 @@ from templates import (
     get_speakers_page,
     get_clone_page,
     get_stt_page,
-    get_history_page
+    get_history_page,
+    get_ocr_page
 )
 
 
@@ -21,6 +22,7 @@ def render_page(template_func, active_page: str):
     content = content.replace("{{ 'active' if page == 'speakers' else '' }}", "active" if active_page == 'speakers' else "")
     content = content.replace("{{ 'active' if page == 'clone' else '' }}", "active" if active_page == 'clone' else "")
     content = content.replace("{{ 'active' if page == 'history' else '' }}", "active" if active_page == 'history' else "")
+    content = content.replace("{{ 'active' if page == 'ocr' else '' }}", "active" if active_page == 'ocr' else "")
     return content
 
 
@@ -56,7 +58,12 @@ def register_routes(app):
     async def history_page():
         """生成历史页面"""
         return render_page(get_history_page, 'history')
-    
+
+    @app.get("/ocr", response_class=HTMLResponse)
+    async def ocr_page():
+        """OCR 图片转文字页面"""
+        return render_page(get_ocr_page, 'ocr')
+
     @app.get("/@vite/client")
     async def vite_client():
         """处理 Vite 客户端请求（浏览器插件或缓存导致）"""
