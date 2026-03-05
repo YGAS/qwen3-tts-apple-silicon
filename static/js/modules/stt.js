@@ -40,8 +40,9 @@ function setupSTTListeners() {
 }
 
 function handleSTTAudioFile(file) {
-    if (!file.type.startsWith('audio/')) {
-        alert('请选择音频文件');
+    // 支持音频和视频文件
+    if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
+        alert('请选择音频或视频文件');
         return;
     }
     
@@ -60,7 +61,7 @@ function handleSTTAudioFile(file) {
 
 async function generateSTT() {
     if (!sttAudioFile) {
-        alert('请上传音频文件');
+        alert('请上传音频或视频文件');
         return;
     }
     

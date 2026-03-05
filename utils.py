@@ -192,14 +192,69 @@ def cleanup_stt_temp_files(temp_output_dir: str):
         print(f"[清理STT临时文件] 警告: 无法列出目录: {e}")
 
 
+def is_video_file(file_path: str) -> bool:
+    """检查文件是否为视频格式
+    
+    Args:
+        file_path: 文件路径
+    
+    Returns:
+        是否为视频文件
+    """
+    video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v', '.3gp'}
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext in video_extensions
+
+
+def extract_audio_from_video(video_path: str, output_wav_path: str) -> bool:
+    """从视频文件中提取音频
+    
+    Args:
+        video_path: 视频文件路径
+        output_wav_path: 输出 WAV 文件路径
+    
+    Returns:
+        是否成功提取音频
+    """
+    cmd = [
+        "ffmpeg", "-y", "-v", "error",
+        "-i", video_path,
+        "-vn",  # 不处理视频
+        "-ar", str(SAMPLE_RATE),  # 采样率
+        "-ac", "1",  # 单声道
+        "-c:a", "pcm_s16le",  # 16位 PCM 编码
+        output_wav_path
+    ]
+    
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        return os.path.exists(output_wav_path) and os.path.getsize(output_wav_path) > 0
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"[提取音频] 错误: {e}")
+        return False
+
+
 def convert_audio_if_needed(input_path: str) -> Optional[str]:
-    """转换音频为 WAV 格式"""
+    """转换音频为 WAV 格式，支持从视频提取音频"""
     if not os.path.exists(input_path):
         return None
 
     filename = os.path.basename(input_path)
     name, ext = os.path.splitext(filename)
 
+    # 在 tmp 目录下创建临时文件
+    temp_wav = get_temp_path("temp_convert", f"{name}.wav")
+    
+    # 检查是否为视频文件
+    if is_video_file(input_path):
+        print(f"[转换] 检测到视频文件，提取音频: {filename}")
+        if extract_audio_from_video(input_path, temp_wav):
+            return temp_wav
+        else:
+            cleanup_temp_files(temp_wav)
+            return None
+    
+    # 如果是 WAV 文件，检查是否有效
     if ext.lower() == ".wav":
         try:
             with wave.open(input_path, 'rb') as f:
@@ -208,9 +263,7 @@ def convert_audio_if_needed(input_path: str) -> Optional[str]:
         except wave.Error:
             pass
 
-    # 在 tmp 目录下创建临时文件
-    temp_wav = get_temp_path("temp_convert", f"{name}.wav")
-    
+    # 转换音频为 WAV 格式
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", input_path,
            "-ar", str(SAMPLE_RATE), "-ac", "1", "-c:a", "pcm_s16le", temp_wav]
 

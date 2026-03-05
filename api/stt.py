@@ -23,16 +23,16 @@ async def speech_to_text(
     model_key: str = Form(None),
     language: str = Form("Chinese")
 ):
-    """语音转文字 - 使用 ASR 模型生成文本，使用 ForcedAligner 模型生成时间戳"""
+    """语音转文字 - 支持音频和视频文件，使用 ASR 模型生成文本，使用 ForcedAligner 模型生成时间戳"""
     if not audio.filename:
-        raise HTTPException(status_code=400, detail="请上传音频文件")
+        raise HTTPException(status_code=400, detail="请上传音频或视频文件")
 
     temp_input = None
     wav_path = None
     temp_output_dir = None
 
     try:
-        # 保存上传的音频到 tmp 目录
+        # 保存上传的音频或视频文件到 tmp 目录
         safe_filename = re.sub(r'[^\w\s.-]', '', audio.filename).strip()
         temp_input = get_temp_path("temp_stt", safe_filename)
         with open(temp_input, "wb") as f:

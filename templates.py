@@ -215,12 +215,12 @@ def get_stt_page():
 
 <div style="max-width: 800px;">
     <div class="card">
-        <label class="form-label">上传音频文件</label>
+        <label class="form-label">上传音频或视频文件</label>
         <div class="drop-zone" id="stt-drop-zone">
             <i class="fas fa-cloud-upload-alt" style="font-size: 48px; color: #6b7280; margin-bottom: 16px;"></i>
-            <p style="color: #d1d5db; margin-bottom: 8px;">拖拽音频文件到此处，或点击上传</p>
-            <p style="font-size: 13px; color: #6b7280;">支持 MP3, WAV, M4A, FLAC 等格式</p>
-            <input type="file" id="stt-audio" accept="audio/*" style="display: none;">
+            <p style="color: #d1d5db; margin-bottom: 8px;">拖拽音频或视频文件到此处，或点击上传</p>
+            <p style="font-size: 13px; color: #6b7280;">音频: MP3, WAV, M4A, FLAC 等 | 视频: MP4, AVI, MOV, MKV 等</p>
+            <input type="file" id="stt-audio" accept="audio/*,video/*" style="display: none;">
         </div>
         <p id="stt-file-name" class="hidden" style="margin-top: 12px; color: #22c55e; font-size: 14px;"></p>
     </div>
