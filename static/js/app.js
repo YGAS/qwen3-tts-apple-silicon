@@ -8,7 +8,6 @@ const scripts = [
     '/static/js/modules/utils.js',
     '/static/js/modules/tts.js',
     '/static/js/modules/stt.js',
-    '/static/js/modules/ocr.js',
     '/static/js/modules/speakers.js',
     '/static/js/modules/clone.js',
     '/static/js/modules/history.js'
@@ -47,8 +46,6 @@ loadScripts(scripts, () => {
             setupTTSListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
-        } else if (path === '/ocr') {
-            setupOCRListeners();
         } else if (path === '/speakers') {
             loadSpeakersPage();
         } else if (path === '/clone') {
@@ -69,8 +66,6 @@ loadScripts(scripts, () => {
             setupTTSListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
-        } else if (path === '/ocr') {
-            setupOCRListeners();
         } else if (path === '/speakers') {
             loadSpeakersPage();
         } else if (path === '/clone') {

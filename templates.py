@@ -36,10 +36,6 @@ def get_html_template():
                     <i class="fas fa-language"></i>
                     <span>语音转文字</span>
                 </a>
-                <a href="/ocr" class="nav-item {{ 'active' if page == 'ocr' else '' }}">
-                    <i class="fas fa-eye"></i>
-                    <span>图片转文字</span>
-                </a>
                 <a href="/speakers" class="nav-item {{ 'active' if page == 'speakers' else '' }}">
                     <i class="fas fa-users"></i>
                     <span>音色库</span>
@@ -65,7 +61,7 @@ def get_html_template():
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=14"></script>
+    <script src="/static/js/app.js?v=18"></script>
 </body>
 </html>'''
 
@@ -290,7 +286,7 @@ def get_stt_page():
 
 
 def get_history_page():
-    """历史记录页面内容"""
+    """历史记录页面"""
     return '''<h1 class="page-title">生成历史</h1>
 
 <div id="history-list"></div>
@@ -299,107 +295,3 @@ def get_history_page():
     <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 16px; display: block;"></i>
     暂无生成记录
 </p>'''
-
-
-def get_ocr_page():
-    """OCR 页面内容"""
-    return '''<h1 class="page-title">图片转文字</h1>
-
-<div style="max-width: 900px;">
-    <div class="card">
-        <label class="form-label">上传图片</label>
-        <div class="drop-zone" id="ocr-drop-zone">
-            <i class="fas fa-image" style="font-size: 48px; color: #6b7280; margin-bottom: 16px;"></i>
-            <p style="color: #d1d5db; margin-bottom: 8px;">拖拽图片到此处，或点击上传</p>
-            <p style="font-size: 13px; color: #6b7280;">支持 PNG, JPG, JPEG, GIF, WEBP, BMP 格式</p>
-            <input type="file" id="ocr-image" accept="image/*" style="display: none;">
-        </div>
-        <div id="ocr-image-preview-container" class="hidden" style="margin-top: 16px;">
-            <img id="ocr-image-preview" style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 1px solid #4b5563;">
-            <p id="ocr-file-name" style="margin-top: 8px; color: #22c55e; font-size: 14px;"></p>
-        </div>
-    </div>
-
-    <div class="card">
-        <label class="form-label">提示词（可选）</label>
-        <input type="text" id="ocr-prompt" class="form-input" placeholder="只提取图片中的原始文字内容，不要添加任何描述或标题。" value="只提取图片中的原始文字内容，不要添加任何描述或标题。">
-        <p style="font-size: 13px; color: #9ca3af; margin-top: 8px;">提示词会指导模型如何识别和格式化输出内容</p>
-    </div>
-
-    <div class="card">
-        <div class="grid-2">
-            <div>
-                <label class="form-label">最大 Token 数</label>
-                <input type="number" id="ocr-max-tokens" class="form-input" value="4000" min="100" max="8000" step="100">
-            </div>
-            <div>
-                <label class="form-label">温度参数</label>
-                <input type="number" id="ocr-temperature" class="form-input" value="0.0" min="0" max="1" step="0.1">
-            </div>
-        </div>
-        <label style="display: flex; align-items: center; gap: 8px; margin-top: 16px; cursor: pointer;">
-            <input type="checkbox" id="ocr-cleanup-tags" style="width: 16px; height: 16px;" checked>
-            <span style="font-size: 14px; color: #d1d5db;">清理 grounding tags（去除坐标信息）</span>
-        </label>
-    </div>
-
-    <div style="display: flex; gap: 12px; margin-bottom: 20px;">
-        <button class="btn btn-primary" id="btn-ocr-generate" onclick="generateOCR()">
-            <i class="fas fa-eye"></i>
-            <span>开始识别</span>
-        </button>
-        <button class="btn btn-secondary" id="btn-ocr-clear" onclick="clearOCR()">
-            <i class="fas fa-trash"></i>
-            <span>清空</span>
-        </button>
-    </div>
-
-    <div id="ocr-result" class="card hidden">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <label class="form-label" style="margin-bottom: 0;">识别结果</label>
-            <div style="display: flex; gap: 8px;">
-                <button class="btn btn-secondary" onclick="copyOCRResult()" style="padding: 6px 12px; font-size: 12px;">
-                    <i class="fas fa-copy"></i>
-                    <span>复制</span>
-                </button>
-                <button class="btn btn-secondary" onclick="downloadOCRResult()" style="padding: 6px 12px; font-size: 12px;">
-                    <i class="fas fa-download"></i>
-                    <span>下载 .mmd</span>
-                </button>
-            </div>
-        </div>
-        
-        <div style="background-color: #374151; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <span style="font-size: 13px; color: #9ca3af;">Markdown 文本</span>
-                <span id="ocr-stats" style="font-size: 12px; color: #22c55e;"></span>
-            </div>
-            <pre id="ocr-text" style="color: #d1d5db; line-height: 1.6; white-space: pre-wrap; max-height: 400px; overflow-y: auto; font-family: inherit; margin: 0;"></pre>
-        </div>
-
-        <div id="ocr-raw-section" class="hidden">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <span style="font-size: 13px; color: #9ca3af;">原始输出（含 grounding tags）</span>
-                <button class="btn btn-secondary" onclick="toggleRawOutput()" style="padding: 4px 8px; font-size: 11px;">
-                    <i class="fas fa-eye-slash"></i>
-                    <span>隐藏</span>
-                </button>
-            </div>
-            <pre id="ocr-raw-text" style="background-color: #1f2937; border-radius: 8px; padding: 16px; color: #6b7280; line-height: 1.6; white-space: pre-wrap; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; margin: 0;"></pre>
-        </div>
-    </div>
-
-    <div id="ocr-error" class="card hidden" style="background-color: rgba(220, 38, 38, 0.1); border: 1px solid #dc2626;">
-        <div style="color: #dc2626;">
-            <i class="fas fa-exclamation-circle"></i>
-            <span id="ocr-error-message"></span>
-        </div>
-    </div>
-
-    <div id="ocr-loading" class="card hidden" style="text-align: center; padding: 40px;">
-        <div class="spinner" style="width: 40px; height: 40px; border-width: 3px; margin: 0 auto 16px;"></div>
-        <p style="color: #9ca3af;">正在识别图片，请稍候...</p>
-        <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">首次使用需要加载模型，可能需要一些时间</p>
-    </div>
-</div>'''
-

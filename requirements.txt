@@ -27,15 +27,13 @@ mlx==0.30.3
 mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git
 mlx-lm==0.30.5
 mlx-metal==0.30.3
-mlx-vlm>=0.1.0
 msgpack==1.1.2
 numba==0.63.1
 numpy==2.3.5
 packaging==26.0
-pillow>=10.0.0
 platformdirs==4.5.1
 pooch==1.8.2
-protobuf==6.33.4
+protobuf>=6.33.5
 pycparser==3.0
 pycryptodomex==3.23.0
 pyloudnorm==0.2.0
