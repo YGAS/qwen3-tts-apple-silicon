@@ -37,12 +37,16 @@ ASR_MODELS = {
     "qwen3_asr_0.6b": {
         "folder": "Qwen3-ASR-0.6B-8bit",
         "type": "qwen3_asr",
-        "default": False
+        "default": True,
+        "label": "0.6B (轻量版)",
+        "description": "速度更快，适合实时应用"
     },
     "qwen3_asr_1.7b": {
         "folder": "Qwen3-ASR-1.7B-8bit",
         "type": "qwen3_asr",
-        "default": True
+        "default": False,
+        "label": "1.7B (标准版)",
+        "description": "精度更高，适合高质量转录"
     },
 }
 

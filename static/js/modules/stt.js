@@ -82,6 +82,12 @@ async function generateSTT() {
         const formData = new FormData();
         formData.append('audio', sttAudioFile);
         
+        // 获取用户选择的模型
+        const modelSelect = document.getElementById('stt-model-select');
+        if (modelSelect) {
+            formData.append('model_key', modelSelect.value);
+        }
+        
         // 获取用户选择的语言
         const languageSelect = document.getElementById('stt-language-select');
         if (languageSelect) {

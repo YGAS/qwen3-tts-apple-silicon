@@ -226,6 +226,15 @@ def get_stt_page():
     </div>
 
     <div class="card">
+        <label class="form-label">选择模型</label>
+        <select id="stt-model-select" class="form-select">
+            <option value="qwen3_asr_0.6b" selected>0.6B (轻量版) - 速度更快，适合实时应用</option>
+            <option value="qwen3_asr_1.7b">1.7B (标准版) - 精度更高，适合高质量转录</option>
+        </select>
+        <p style="font-size: 13px; color: #9ca3af; margin-top: 8px;">轻量版速度更快，标准版识别精度更高</p>
+    </div>
+
+    <div class="card">
         <label class="form-label">识别语言</label>
         <select id="stt-language-select" class="form-select">
             <option value="Chinese" selected>中文</option>
