@@ -225,6 +225,12 @@ body {
     cursor: not-allowed;
 }
 
+/* 按钮激活状态 */
+.btn-secondary.active {
+    background-color: #2563eb;
+    border-color: #2563eb;
+}
+
 /* 音色卡片 */
 .speaker-sections-container {
     display: flex;

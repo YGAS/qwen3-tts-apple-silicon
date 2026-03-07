@@ -281,14 +281,39 @@ def save_audio_file(temp_folder: str, subfolder: str, text_snippet: str) -> str:
     os.makedirs(save_path, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    clean_text = re.sub(r'[^\w\s-]', '', text_snippet)[:FILENAME_MAX_LEN].strip().replace(' ', '_') or "audio"
+    # 清理文本：移除换行符、特殊字符，只保留字母数字和中文
+    clean_text = text_snippet.replace('\n', ' ').replace('\r', ' ')
+    clean_text = re.sub(r'[^\w\s\u4e00-\u9fff-]', '', clean_text)[:FILENAME_MAX_LEN].strip().replace(' ', '_') or "audio"
     filename = f"{timestamp}_{clean_text}.wav"
     final_path = os.path.join(save_path, filename)
 
     source_file = os.path.join(temp_folder, "audio_000.wav")
 
+    print(f"[save_audio_file] 临时目录: {temp_folder}")
+    print(f"[save_audio_file] 源文件: {source_file}")
+    print(f"[save_audio_file] 源文件存在: {os.path.exists(source_file)}")
+
+    # 如果直接路径不存在，尝试查找tmp目录下的文件
+    if not os.path.exists(source_file):
+        # 列出临时目录内容
+        if os.path.exists(temp_folder):
+            print(f"[save_audio_file] 临时目录内容: {os.listdir(temp_folder)}")
+        else:
+            print(f"[save_audio_file] 临时目录不存在!")
+
+        # 尝试在tmp目录下查找匹配的音频文件
+        import glob
+        possible_files = glob.glob(os.path.join(TMP_DIR, "temp_clone_*/audio_000.wav"))
+        if possible_files:
+            # 使用最新的文件
+            source_file = max(possible_files, key=os.path.getmtime)
+            print(f"[save_audio_file] 找到替代源文件: {source_file}")
+
     if os.path.exists(source_file):
         shutil.move(source_file, final_path)
+        print(f"[save_audio_file] 文件已移动到: {final_path}")
+    else:
+        print(f"[save_audio_file] 错误: 源文件不存在!")
 
     cleanup_temp_files(temp_folder)
 

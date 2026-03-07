@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import BASE_DIR, BASE_OUTPUT_DIR, VOICES_DIR, TMP_DIR
 
 # 导入 API 路由
-from api import common, tts, stt, clone, history, files
+from api import common, tts, stt, clone, history, files, ocr
 
 # 导入页面路由
 from routes import register_routes
@@ -71,6 +71,7 @@ app.include_router(stt.router, prefix="/api", tags=["stt"])
 app.include_router(clone.router, prefix="/api", tags=["clone"])
 app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(files.router, prefix="/api", tags=["files"])
+app.include_router(ocr.router, prefix="/api", tags=["ocr"])
 
 # 注册页面路由
 register_routes(app)

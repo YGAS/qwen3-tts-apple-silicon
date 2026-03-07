@@ -44,6 +44,7 @@ loadScripts(scripts, () => {
         if (path === '/tts' || path === '/') {
             loadSpeakersForTTS();
             setupTTSListeners();
+            setupImageUploadListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
         } else if (path === '/speakers') {
@@ -64,6 +65,7 @@ loadScripts(scripts, () => {
         if (path === '/tts' || path === '/') {
             loadSpeakersForTTS();
             setupTTSListeners();
+            setupImageUploadListeners();
         } else if (path === '/stt') {
             setupSTTListeners();
         } else if (path === '/speakers') {

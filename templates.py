@@ -61,7 +61,7 @@ def get_html_template():
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=18"></script>
+    <script src="/static/js/app.js?v=19"></script>
 </body>
 </html>'''
 
@@ -71,12 +71,92 @@ def get_tts_page():
     return '''<h1 class="page-title">文字转语音</h1>
 
 <div style="max-width: 800px;">
+    <!-- 输入方式切换 -->
     <div class="card">
-        <label class="form-label">输入文案</label>
-        <textarea id="tts-text" class="form-textarea" placeholder="请输入要转换为语音的文案..."></textarea>
-        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #9ca3af;">
-            <span>支持中文、英文、日文、韩文</span>
-            <span id="text-count">0 字</span>
+        <label class="form-label">输入方式</label>
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+            <button class="btn btn-secondary active" id="btn-input-text" onclick="switchInputMode('text')" style="flex: 1;">
+                <i class="fas fa-keyboard"></i>
+                <span>文本输入</span>
+            </button>
+            <button class="btn btn-secondary" id="btn-input-image" onclick="switchInputMode('image')" style="flex: 1;">
+                <i class="fas fa-image"></i>
+                <span>图片识别</span>
+            </button>
+        </div>
+
+        <!-- 文本输入区域 -->
+        <div id="text-input-area">
+            <label class="form-label">输入文案</label>
+            <textarea id="tts-text" class="form-textarea" placeholder="请输入要转换为语音的文案..."></textarea>
+            <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #9ca3af;">
+                <span>支持中文、英文、日文、韩文</span>
+                <span id="text-count">0 字</span>
+            </div>
+        </div>
+
+        <!-- 图片输入区域 -->
+        <div id="image-input-area" class="hidden">
+            <label class="form-label">上传图片</label>
+            <div class="drop-zone" id="image-drop-zone">
+                <i class="fas fa-cloud-upload-alt" style="font-size: 48px; color: #6b7280; margin-bottom: 16px;"></i>
+                <p style="color: #d1d5db; margin-bottom: 8px;">拖拽图片到此处，或点击上传</p>
+                <p style="font-size: 13px; color: #6b7280;">支持 JPG, PNG, WEBP 等格式</p>
+                <input type="file" id="image-file" accept="image/*" style="display: none;">
+            </div>
+            <p id="image-file-name" class="hidden" style="margin-top: 12px; color: #22c55e; font-size: 14px;"></p>
+
+            <!-- 图片预览 -->
+            <div id="image-preview-container" class="hidden" style="margin-top: 16px;">
+                <img id="image-preview" style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 1px solid #4b5563;">
+            </div>
+
+            <!-- OCR 识别按钮和结果 -->
+            <div id="ocr-section" class="hidden" style="margin-top: 16px;">
+                <button class="btn btn-secondary" id="btn-ocr" onclick="performOCR()" style="width: 100%;">
+                    <i class="fas fa-eye"></i>
+                    <span>识别图片文字</span>
+                </button>
+                <div id="ocr-loading" class="hidden" style="text-align: center; margin-top: 12px; color: #9ca3af;">
+                    <span class="spinner"></span> 正在识别...
+                </div>
+            </div>
+
+            <!-- OCR 配置 -->
+            <div class="ocr-config-section" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid #4b5563;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <label class="form-label" style="margin-bottom: 0;">OCR 服务配置</label>
+                    <button class="btn btn-secondary" id="btn-toggle-ocr-config" onclick="toggleOCRConfig()" style="padding: 6px 12px; font-size: 12px;">
+                        <i class="fas fa-cog"></i>
+                        <span>展开配置</span>
+                    </button>
+                </div>
+                <div id="ocr-config-panel" class="hidden">
+                    <div style="margin-bottom: 12px;">
+                        <label class="form-label" style="font-size: 12px; color: #9ca3af;">服务地址</label>
+                        <input type="text" id="ocr-base-url" class="form-input" value="http://localhost:1234/v1" placeholder="http://localhost:1234/v1">
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <label class="form-label" style="font-size: 12px; color: #9ca3af;">API Key</label>
+                        <input type="password" id="ocr-api-key" class="form-input" value="sk-lm-SaeJfHIy:GTdi4a8wepwEzetDEH7N" placeholder="请输入API Key">
+                    </div>
+                    <div style="margin-bottom: 12px;">
+                        <label class="form-label" style="font-size: 12px; color: #9ca3af;">模型名称</label>
+                        <input type="text" id="ocr-model" class="form-input" value="qwen3.5-0.8b" placeholder="qwen3.5-0.8b">
+                    </div>
+                    <div id="ocr-config-error" class="hidden" style="color: #ef4444; font-size: 13px; margin-top: 8px;"></div>
+                </div>
+            </div>
+
+            <!-- 识别结果编辑区 -->
+            <div id="ocr-result-area" class="hidden" style="margin-top: 16px;">
+                <label class="form-label">识别结果（可编辑）</label>
+                <textarea id="ocr-text" class="form-textarea" rows="4" placeholder="识别结果将显示在这里..."></textarea>
+                <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #9ca3af;">
+                    <span>可手动修改识别结果</span>
+                    <span id="ocr-text-count">0 字</span>
+                </div>
+            </div>
         </div>
     </div>
 
